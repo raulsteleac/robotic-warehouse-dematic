@@ -39,9 +39,9 @@ class _VectorWriter:
 
 class Action(Enum):
     NOOP = 0
-    FORWARD = 1
-    LEFT = 2
-    RIGHT = 3
+    LEFT = 1
+    RIGHT = 2
+    FORWARD = 3
     TOGGLE_LOAD = 4
 
 
@@ -149,6 +149,7 @@ class Warehouse(gym.Env):
 
     def __init__(
         self,
+        global_observations: bool,
         shelf_columns: int,
         column_height: int,
         shelf_rows: int,
@@ -242,12 +243,16 @@ class Warehouse(gym.Env):
         else:
             self._make_layout_from_str(layout)
 
-        self.n_agents = n_agents
+        self.n_agents_ = n_agents
         self.msg_bits = msg_bits
         self.sensor_range = sensor_range
         self.max_inactivity_steps: Optional[int] = max_inactivity_steps
         self.reward_type = reward_type
         self.reward_range = (0, 1)
+        
+        self.global_observations = global_observations
+        if self.global_observations:
+            self.sensor_range = max(self.grid_size)
 
         self._cur_inactive_steps = None
         self._cur_steps = 0
@@ -260,7 +265,7 @@ class Warehouse(gym.Env):
             sa_action_space = spaces.Discrete(sa_action_space[0])
         else:
             sa_action_space = spaces.MultiDiscrete(sa_action_space)
-        self.action_space = spaces.Tuple(tuple(n_agents * [sa_action_space]))
+        self.action_space_ = spaces.Tuple(tuple(n_agents * [sa_action_space]))
 
         self.request_queue_size = request_queue_size
         self.request_queue = []
@@ -270,7 +275,7 @@ class Warehouse(gym.Env):
         # default values:
         self.fast_obs = None
         self.image_obs = None
-        self.observation_space = None
+        self.observation_space_ = None
         if observation_type == ObserationType.IMAGE:
             self._use_image_obs(image_observation_layers, image_observation_directional)
         else:
@@ -284,6 +289,18 @@ class Warehouse(gym.Env):
             self._use_fast_obs()
 
         self.renderer = None
+
+    @property
+    def observation_space(self):
+        return self.observation_space_
+
+    @property
+    def action_space(self):
+        return self.action_space_
+    
+    @property
+    def n_agents(self):
+        return self.n_agents_
 
     def _make_layout_from_params(self, shelf_columns, shelf_rows, column_height):
         assert shelf_columns % 2 == 1, "Only odd number of shelf columns is supported"
@@ -369,13 +386,12 @@ class Warehouse(gym.Env):
         # total observation
         min_obs = np.stack(layers_min)
         max_obs = np.stack(layers_max)
-        self.observation_space = spaces.Tuple(
-            tuple([spaces.Box(min_obs, max_obs, dtype=np.float32)] * self.n_agents)
+        self.observation_space_ = spaces.Tuple(
+            tuple([spaces.Box(min_obs, max_obs, dtype=np.float32)] * self.n_agents_)
         )
 
     def _use_slow_obs(self):
         self.fast_obs = False
-
         self._obs_bits_for_self = 4 + len(Direction)
         self._obs_bits_per_agent = 1 + len(Direction) + self.msg_bits
         self._obs_bits_per_shelf = 2
@@ -401,7 +417,7 @@ class Warehouse(gym.Env):
                 [self.grid_size[1], self.grid_size[0]]
             )
 
-        self.observation_space = spaces.Tuple(
+        self.observation_space_ = spaces.Tuple(
             tuple(
                 [
                     spaces.Dict(
@@ -440,7 +456,7 @@ class Warehouse(gym.Env):
                             }
                         )
                     )
-                    for _ in range(self.n_agents)
+                    for _ in range(self.n_agents_)
                 ]
             )
         )
@@ -451,7 +467,7 @@ class Warehouse(gym.Env):
 
         self.fast_obs = True
         ma_spaces = []
-        for sa_obs in self.observation_space:
+        for sa_obs in self.observation_space_:
             flatdim = spaces.flatdim(sa_obs)
             ma_spaces += [
                 spaces.Box(
@@ -462,7 +478,7 @@ class Warehouse(gym.Env):
                 )
             ]
 
-        self.observation_space = spaces.Tuple(tuple(ma_spaces))
+        self.observation_space_ = spaces.Tuple(tuple(ma_spaces))
 
     def _is_highway(self, x: int, y: int) -> bool:
         return self.highways[y, x]
@@ -538,10 +554,9 @@ class Warehouse(gym.Env):
                     obs = np.rot90(obs, k=1, axes=(1,2))
                 # no rotation needed for UP direction
             return obs
-
+        
         min_x = agent.x - self.sensor_range
         max_x = agent.x + self.sensor_range + 1
-
         min_y = agent.y - self.sensor_range
         max_y = agent.y + self.sensor_range + 1
 
@@ -573,7 +588,7 @@ class Warehouse(gym.Env):
 
         if self.fast_obs:
             # write flattened observations
-            obs = _VectorWriter(self.observation_space[agent.id - 1].shape[0])
+            obs = _VectorWriter(self.observation_space_[agent.id - 1].shape[0])
 
             if self.normalised_coordinates:
                 agent_x = agent.x / (self.grid_size[1] - 1)
@@ -681,17 +696,16 @@ class Warehouse(gym.Env):
         # spawn agents at random locations
         agent_locs = np.random.choice(
             np.arange(self.grid_size[0] * self.grid_size[1]),
-            size=self.n_agents,
+            size=self.n_agents_,
             replace=False,
         )
         agent_locs = np.unravel_index(agent_locs, self.grid_size)
         # and direction
-        agent_dirs = np.random.choice([d for d in Direction], size=self.n_agents)
+        agent_dirs = np.random.choice([d for d in Direction], size=self.n_agents_)
         self.agents = [
             Agent(x, y, dir_, self.msg_bits)
             for y, x, dir_ in zip(*agent_locs, agent_dirs)
         ]
-
         self._recalc_grid()
 
         self.request_queue = list(
@@ -778,7 +792,7 @@ class Warehouse(gym.Env):
             assert agent.req_action == Action.FORWARD
             agent.req_action = Action.NOOP
 
-        rewards = np.zeros(self.n_agents)
+        rewards = np.zeros(self.n_agents_)
 
         for agent in self.agents:
             agent.prev_x, agent.prev_y = agent.x, agent.y
@@ -840,9 +854,9 @@ class Warehouse(gym.Env):
             self.max_inactivity_steps
             and self._cur_inactive_steps >= self.max_inactivity_steps
         ) or (self.max_steps and self._cur_steps >= self.max_steps):
-            dones = self.n_agents * [True]
+            dones = self.n_agents_ * [True]
         else:
-            dones = self.n_agents * [False]
+            dones = self.n_agents_ * [False]
 
         new_obs = tuple([self._make_obs(agent) for agent in self.agents])
         info = {}
