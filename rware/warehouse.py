@@ -249,10 +249,10 @@ class Warehouse(gym.Env):
         self.max_inactivity_steps: Optional[int] = max_inactivity_steps
         self.reward_type = reward_type
         self.reward_range = (0, 1)
-        self.no_need_return_item = True
+        self.no_need_return_item = False
         self.global_observations = global_observations
         if self.global_observations:
-            self.sensor_range = max(self.grid_size)
+            self.sensor_range = 0#max(self.grid_size)
 
         self._cur_inactive_steps = None
         self._cur_steps = 0
@@ -396,8 +396,10 @@ class Warehouse(gym.Env):
         self._obs_bits_per_agent = 1 + len(Direction) + self.msg_bits
         self._obs_bits_per_shelf = 2
         self._obs_bits_for_requests = 2
-
-        self._obs_sensor_locations = (1 + 2 * self.sensor_range) ** 2
+        if self.global_observations:
+            self._obs_sensor_locations = self.grid_size[0] * self.grid_size[1]
+        else:
+            self._obs_sensor_locations = (1 + 2 * self.sensor_range) ** 2
 
         self._obs_length = (
             self._obs_bits_for_self
@@ -554,11 +556,16 @@ class Warehouse(gym.Env):
                     obs = np.rot90(obs, k=1, axes=(1,2))
                 # no rotation needed for UP direction
             return obs
-        
-        min_x = agent.x - self.sensor_range
-        max_x = agent.x + self.sensor_range + 1
-        min_y = agent.y - self.sensor_range
-        max_y = agent.y + self.sensor_range + 1
+        if self.global_observations:
+            min_x = 0
+            max_x = self.grid_size[1]
+            min_y = 0
+            max_y = self.grid_size[0]
+        else:
+            min_x = agent.x - self.sensor_range
+            max_x = agent.x + self.sensor_range + 1
+            min_y = agent.y - self.sensor_range
+            max_y = agent.y + self.sensor_range + 1
 
         # sensors
         if (
