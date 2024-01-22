@@ -249,7 +249,7 @@ class Warehouse(gym.Env):
         self.max_inactivity_steps: Optional[int] = max_inactivity_steps
         self.reward_type = reward_type
         self.reward_range = (0, 1)
-        
+        self.no_need_return_item = True
         self.global_observations = global_observations
         if self.global_observations:
             self.sensor_range = max(self.grid_size)
@@ -815,8 +815,6 @@ class Warehouse(gym.Env):
 
                     agent.has_delivered = False
 
-        self._recalc_grid()
-
         shelf_delivered = False
         for y, x in self.goals:
             shelf_id = self.grid[_LAYER_SHELFS, x, y]
@@ -833,6 +831,28 @@ class Warehouse(gym.Env):
                 list(set(self.shelfs) - set(self.request_queue))
             )
             self.request_queue[self.request_queue.index(shelf)] = new_request
+
+            if self.no_need_return_item:
+                for sx, sy in zip(
+                    np.indices(self.grid_size)[0].reshape(-1),
+                    np.indices(self.grid_size)[1].reshape(-1),
+                ): 
+                    if not self._is_highway(sy, sx) and not self.grid[_LAYER_SHELFS, sy, sx]:
+                        print(f"{sx}-{sy} MPTYYY")
+                agent.carrying_shelf = None
+                for sx, sy in zip(
+                    np.indices(self.grid_size)[0].reshape(-1),
+                    np.indices(self.grid_size)[1].reshape(-1),
+                ): 
+                    if not self._is_highway(sy, sx) and not self.grid[_LAYER_SHELFS, sy, sx]:
+                        print(f"{sx}-{sy}")
+                        self.shelfs[shelf_id - 1].x = sx
+                        self.shelfs[shelf_id - 1].y = sy
+                        self.grid[_LAYER_SHELFS, sy, sx] = shelf_id
+                        break
+                # self._recalc_grid()
+
+            
             # also reward the agents
             if self.reward_type == RewardType.GLOBAL:
                 rewards += 1
@@ -843,6 +863,8 @@ class Warehouse(gym.Env):
                 agent_id = self.grid[_LAYER_AGENTS, x, y]
                 self.agents[agent_id - 1].has_delivered = True
                 rewards[agent_id - 1] += 0.5
+
+        self._recalc_grid()
 
         if shelf_delivered:
             self._cur_inactive_steps = 0
