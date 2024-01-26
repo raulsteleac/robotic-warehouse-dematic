@@ -11,7 +11,7 @@ import numpy as np
 import math
 import six
 from gym import error
-from rware.warehouse import Direction
+from rware.warehouse_new import Direction, AgentType
 
 if "Apple" in sys.version:
     if "DYLD_FALLBACK_LIBRARY_PATH" in os.environ:
@@ -49,11 +49,14 @@ RAD2DEG = 57.29577951308232
 _BLACK = (0, 0, 0)
 _WHITE = (255, 255, 255)
 _GREEN = (0, 255, 0)
+_LIGHTORANGE = (255, 200, 0)
 _RED = (255, 0, 0)
 _ORANGE = (255, 165, 0)
 _DARKORANGE = (255, 140, 0)
 _DARKSLATEBLUE = (72, 61, 139)
 _TEAL = (0, 128, 128)
+_MAROON = (128, 0, 0)
+_BLUE = (30,144,255)
 
 _BACKGROUND_COLOR = _WHITE
 _GRID_COLOR = _BLACK
@@ -63,6 +66,8 @@ _AGENT_COLOR = _DARKORANGE
 _AGENT_LOADED_COLOR = _RED
 _AGENT_DIR_COLOR = _BLACK
 _GOAL_COLOR = (60, 60, 60)
+_CARRIER_COLOR = _MAROON
+_LOADER_AGENT = _BLUE
 
 _SHELF_PADDING = 2
 
@@ -241,13 +246,20 @@ class Viewer(object):
 
         radius = self.grid_size / 3
 
-        resolution = 6
-
         for agent in env.agents:
 
             col, row = agent.x, agent.y
             row = self.rows - row - 1  # pyglet rendering is reversed
-
+            
+            if agent.type == AgentType.AGV:
+                resolution = 6
+            elif agent.type == AgentType.PICKER:
+                resolution = 4
+            elif agent.type == AgentType.AGENT:
+                resolution = 8
+            else:
+                raise ValueError("Agent type not recognized by environment.")
+            
             # make a circle
             verts = []
             for i in range(resolution):
