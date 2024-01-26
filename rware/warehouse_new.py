@@ -117,24 +117,7 @@ class ImageLayer(Enum):
     AGENT_LOAD = 4 # binary layer indicating agents with load
     GOALS = 5 # binary layer indicating goal/ delivery locations
     ACCESSIBLE = 6 # binary layer indicating accessible cells (all but occupied cells/ out of map)
-
-def find_aisles(pairs):
-    groups = []
-
-    for pair in pairs:
-        added = False
-
-        for group in groups:
-            if any(abs(pair[0] - gp[0]) + abs(pair[1] - gp[1]) == 1 for gp in group):
-                group.append(pair)
-                added = True
-                break
-
-        if not added:
-            groups.append([pair])
-
-    return groups
-        
+      
 
 class Entity:
     def __init__(self, id_: int, x: int, y: int):
@@ -402,7 +385,6 @@ class Warehouse(gym.Env):
                 if not highway_func(x, y) and (x, y) not in self.goals:
                     self.item_loc_dict[item_loc_index] = (x, y)
                     item_loc_index+=1
-        self.aisles = find_aisles(list(self.item_loc_dict.values()))
 
     def _make_layout_from_str(self, layout):
         layout = layout.strip()
@@ -824,14 +806,13 @@ class Warehouse(gym.Env):
                 if macro_action == 0:
                     agent.req_action = Action.NOOP
                 else:
-                    if macro_action!= 0:
+                    agent.path = self.find_path((agent.y, agent.x), self.item_loc_dict[macro_action[0]], agent.carrying_shelf)
+                    if agent.path == None:
+                        agent.req_action = Action.NOOP
+                        agent.busy = False
+                    else:
                         agent.busy = True
-                        agent.path = self.find_path((agent.y, agent.x), self.item_loc_dict[macro_action[0]], agent.carrying_shelf)
-                        if agent.path == None:
-                            agent.req_action = Action.NOOP
-                            agent.busy = False
-                        else:
-                            agent.req_action = get_next_micro_action(agent.x, agent.y, agent.dir, agent.path[0])
+                        agent.req_action = get_next_micro_action(agent.x, agent.y, agent.dir, agent.path[0])
             else:
                 if agent.path == []:
                     agent.req_action = Action.TOGGLE_LOAD
@@ -1001,6 +982,7 @@ class Warehouse(gym.Env):
 
         new_obs = tuple([self._make_obs(agent) for agent in self.agents])
         info = {}
+        info["vehicles_busy"] = [agent.busy for agent in self.agents]
         return new_obs, list(rewards), dones, info
 
     def render(self, mode="human"):
