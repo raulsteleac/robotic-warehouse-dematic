@@ -329,7 +329,6 @@ class Warehouse(gym.Env):
             sa_action_space = spaces.MultiDiscrete(sa_action_space)
 
         self.action_space_ = spaces.Tuple(tuple(self.n_agents_ * [sa_action_space]))
-
         self.request_queue_size = request_queue_size
         self.request_queue = []
 
@@ -831,6 +830,22 @@ class Warehouse(gym.Env):
                     self.grid[_LAYER_PICKERS, agent.y, agent.x] = agent.id
                 else:
                     self.grid[_LAYER_AGENTS, agent.y, agent.x] = agent.id
+    
+    def get_shelf_request_information(self):
+        request_item_map = np.zeros(len(self.item_loc_dict) - len(self.goals))
+        for id_, coords in self.item_loc_dict.items():
+            if (coords[1], coords[0]) not in self.goals:
+                if self.grid[_LAYER_SHELFS, coords[0], coords[1]]!=0:
+                    request_item_map[id_ - len(self.goals) - 1] = int(self.shelfs[self.grid[_LAYER_SHELFS, coords[0], coords[1]] - 1] in self.request_queue)
+        return request_item_map
+    
+    def get_empty_shelf_informatlocationsion(self):
+        empty_item_map = np.zeros(len(self.item_loc_dict) - len(self.goals))
+        for id_, coords in self.item_loc_dict.items():
+            if (coords[1], coords[0]) not in self.goals:
+                if self.grid[_LAYER_SHELFS, coords[0], coords[1]] == 0:
+                    empty_item_map[id_ - len(self.goals) - 1] = 1
+        return empty_item_map
     
     def reset(self):
         Shelf.counter = 0
