@@ -143,7 +143,6 @@ class Agent(Entity):
         self.message = np.zeros(msg_bits)
         self.req_action: Optional[Action] = None
         self.carrying_shelf: Optional[Shelf] = None
-        self.carrying_shelf_loader = None
         self.canceled_action = None
         self.has_delivered = False
         self.path = None
@@ -300,11 +299,11 @@ class Warehouse(gym.Env):
         self.n_agvs = n_agvs
         self.n_pickers = n_pickers
         self.n_agents_ = n_agvs + n_pickers
+
         if n_pickers > 0:
             self._agent_types = [AgentType.AGV for _ in range(n_agvs)] + [AgentType.PICKER for _ in range(n_pickers)]
         else:
             self._agent_types = [AgentType.AGENT for _ in range(self.n_agents_)]
-
         assert msg_bits == False
         self.msg_bits = msg_bits
         self.sensor_range = sensor_range
@@ -334,6 +333,8 @@ class Warehouse(gym.Env):
 
         self.agents: List[Agent] = []
         self._targets = np.zeros(len(self.item_loc_dict), dtype=int)
+        self.same_action_count = np.ones(self.n_agents_)
+        self._same_action_threshold = 100
         # default values:
         self.fast_obs = None
         self.image_obs = None
@@ -975,7 +976,6 @@ class Warehouse(gym.Env):
     ) -> Tuple[List[np.ndarray], List[float], List[bool], Dict]:
         assert len(macro_actions) == len(self.agents)
         # Logic for Macro Actions
-
         for agent, macro_action in zip(self.agents, macro_actions):
             # Initialize action for step
             agent.req_action = Action.NOOP
@@ -993,6 +993,7 @@ class Warehouse(gym.Env):
                         agent.busy = True
                         agent.req_action = get_next_micro_action(agent.x, agent.y, agent.dir, agent.path[0])
                         self._targets[agent.id-1] = macro_action
+                        self.same_action_count[agent.id - 1] = 1
             else:
                 # Check agent finished the give path if not continue the path
                 if agent.path == []:
@@ -1002,7 +1003,11 @@ class Warehouse(gym.Env):
                         agent.busy = False
                 else:
                     agent.req_action = get_next_micro_action(agent.x, agent.y, agent.dir, agent.path[0])
-        
+                    self.same_action_count[agent.id - 1] += 1
+        # Unfreeze agents if stuck following an "impossible" action
+        for agent, count in zip(self.agents, self.same_action_count):
+            if count == self._same_action_threshold:
+                agent.busy = False
          # agents that can_carry should not collide
         carry_agents = [agent for agent in self.agents if agent.type != AgentType.PICKER]
         self.resolve_move_conflict(carry_agents)
@@ -1010,7 +1015,6 @@ class Warehouse(gym.Env):
         rewards = np.zeros(self.n_agents_)
         # Add step penalty
         # rewards -= 0.01
-
         for agent in self.agents:
             agent.prev_x, agent.prev_y = agent.x, agent.y
             if agent.req_action == Action.FORWARD:
@@ -1027,18 +1031,17 @@ class Warehouse(gym.Env):
                         picker_id = self.grid[_LAYER_PICKERS, agent.y, agent.x]
                         if picker_id:
                             agent.carrying_shelf = self.shelfs[shelf_id - 1]
-                            agent.carrying_shelf_loader = picker_id
                             agent.busy = False
                     elif agent.type == AgentType.AGENT:
                         agent.carrying_shelf = self.shelfs[shelf_id - 1]
                         agent.busy = False
-                    # # Reward Pickers and AGVs for loading shelf
-                    # if self.reward_type == RewardType.GLOBAL:
-                    #     rewards += 0.1
-                    # elif self.reward_type == RewardType.INDIVIDUAL:
-                    #     rewards[agent.id - 1] += 0.1
-                    #     if picker_id:
-                    #         rewards[picker_id - 1] += 0.1
+                    # Reward Pickers and AGVs for loading shelf
+                    if self.reward_type == RewardType.GLOBAL:
+                        rewards += 0.5
+                    elif self.reward_type == RewardType.INDIVIDUAL:
+                        rewards[agent.id - 1] += 0.5
+                        if picker_id:
+                            rewards[picker_id - 1] += 0.5
                 else:
                     agent.busy = False
             elif agent.req_action == Action.TOGGLE_LOAD and agent.carrying_shelf:
@@ -1048,7 +1051,6 @@ class Warehouse(gym.Env):
                         agent.carrying_shelf = None
                         agent.busy=False
                     if agent.type == AgentType.AGV and picker_id:
-                        agent.carrying_shelf_loader = None
                         agent.carrying_shelf = None
                         agent.busy=False
                     if agent.has_delivered and self.reward_type == RewardType.TWO_STAGE:
@@ -1058,6 +1060,7 @@ class Warehouse(gym.Env):
                 if (agent.x, agent.y) in self.goals:
                     agent.busy=False
         shelf_delivered = False
+        shelf_deliveries = 0
         for y, x in self.goals:
             shelf_id = self.grid[_LAYER_SHELFS, x, y]
             if not shelf_id:
@@ -1068,6 +1071,7 @@ class Warehouse(gym.Env):
                 continue
             # a shelf was successfully delived.
             shelf_delivered = True
+            shelf_deliveries += 1
             # remove from queue and replace it
             new_request = np.random.choice(
                 list(set(self.shelfs) - set(self.request_queue))
@@ -1087,16 +1091,11 @@ class Warehouse(gym.Env):
                         self.grid[_LAYER_SHELFS, sy, sx] = shelf_id
                         break
             # also reward the agents
-            agent_id = self.grid[_LAYER_AGENTS, x, y]
-            rewards[agent_id - 1] += 1
             if self.reward_type == RewardType.GLOBAL:
                 rewards += 1
             elif self.reward_type == RewardType.INDIVIDUAL:
                 agent_id = self.grid[_LAYER_AGENTS, x, y]
-                rewards[agent_id - 1] += 1
-                picker_id = self.agents[agent_id-1].carrying_shelf_loader
-                if picker_id:
-                    rewards[picker_id - 1] += 1
+                rewards[agent_id - 1] += 0.5
             elif self.reward_type == RewardType.TWO_STAGE:
                 agent_id = self.grid[_LAYER_AGENTS, x, y]
                 self.agents[agent_id - 1].has_delivered = True
@@ -1120,6 +1119,7 @@ class Warehouse(gym.Env):
         new_obs = tuple([self._make_obs(agent) for agent in self.agents])
         info = {}
         info["vehicles_busy"] = [agent.busy for agent in self.agents]
+        info["shelf_deliveries"] = shelf_deliveries
         return new_obs, list(rewards), dones, info
 
     def render(self, mode="human"):
