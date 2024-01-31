@@ -291,15 +291,14 @@ class Warehouse(gym.Env):
 
         self.goals: List[Tuple[int, int]] = []
 
-        if not layout:
-            self._make_layout_from_params(shelf_columns, shelf_rows, column_height)
-        else:
-            self._make_layout_from_str(layout)
-
         self.n_agvs = n_agvs
         self.n_pickers = n_pickers
         self.n_agents_ = n_agvs + n_pickers
 
+        if not layout:
+            self._make_layout_from_params(shelf_columns, shelf_rows, column_height)
+        else:
+            self._make_layout_from_str(layout)
         if n_pickers > 0:
             self._agent_types = [AgentType.AGV for _ in range(n_agvs)] + [AgentType.PICKER for _ in range(n_pickers)]
         else:
@@ -464,23 +463,12 @@ class Warehouse(gym.Env):
     def _use_slow_obs(self):
         self.fast_obs = False
 
-        if self.normalised_coordinates:
-            location_space = spaces.Box(
-                    low=0.0,
-                    high=1.0,
-                    shape=(2,),
-                    dtype=np.float32,
-            )
-        else:
-            location_space = spaces.MultiDiscrete(
-                [self.grid_size[1], self.grid_size[0]]
-            )
-        item_location_space = spaces.MultiDiscrete([len(self.item_loc_dict)])
-        agent_type_space = spaces.MultiDiscrete([len(set(self._agent_types))])
-        
-        self._obs_bits_for_self = spaces.flatdim(location_space) + 2 + spaces.flatdim(agent_type_space) + spaces.flatdim(item_location_space) + len(Direction) + 1
-        self._obs_bits_per_agent = 1 + spaces.flatdim(item_location_space) + len(Direction) + self.msg_bits
-        self._obs_bits_per_pickers = 1 + spaces.flatdim(item_location_space) + len(Direction) + self.msg_bits
+        location_space = spaces.Box(low=0.0, high=max(self.grid_size), shape=(2,), dtype=np.float32)
+        agent_id_space = spaces.Box(low=0.0, high=self.n_agents_, shape=(1,), dtype=np.float32)
+
+        self._obs_bits_for_self = spaces.flatdim(agent_id_space) + spaces.flatdim(location_space) + 1  + spaces.flatdim(location_space) + 1
+        self._obs_bits_per_agent = spaces.flatdim(agent_id_space) + 1 + spaces.flatdim(location_space)
+        self._obs_bits_per_picker = spaces.flatdim(agent_id_space) + spaces.flatdim(location_space)
         self._obs_bits_per_shelf = 1
         self._obs_bits_for_requests = 1
 
@@ -488,12 +476,12 @@ class Warehouse(gym.Env):
             self._obs_sensor_locations = self.grid_size[0] * self.grid_size[1]
         else:
             self._obs_sensor_locations = (1 + 2 * self.sensor_range) ** 2
-
         self._obs_length = (
             self._obs_bits_for_self
-            + self._obs_sensor_locations * self._obs_bits_per_agent
-            + self._obs_sensor_locations * self._obs_bits_per_pickers
-            + self._obs_sensor_locations * self._obs_bits_per_shelf
+            + self._obs_sensor_locations * (self._obs_bits_per_agent
+            + self._obs_bits_per_picker 
+            + self._obs_bits_per_shelf
+            + self._obs_bits_for_requests)
         )
 
         self.observation_space_ = spaces.Tuple(
@@ -505,11 +493,10 @@ class Warehouse(gym.Env):
                                 "self": spaces.Dict(
                                     OrderedDict(
                                         {
+                                            "agent_id": agent_id_space,
                                             "location": location_space,
-                                            "carrying_shelf": spaces.MultiDiscrete(2),
-                                            "agent_type": agent_type_space,
-                                            "target_location": item_location_space,
-                                            "direction": spaces.Discrete(4),
+                                            "carrying_shelf": spaces.MultiBinary(1),
+                                            "target_location": location_space,
                                             "on_highway": spaces.MultiBinary(1),
                                         }
                                     )
@@ -520,18 +507,11 @@ class Warehouse(gym.Env):
                                         spaces.Dict(
                                             OrderedDict(
                                                 {
-                                                    "has_agent": spaces.MultiBinary(1),
-                                                    "target_location": item_location_space,
-                                                    "direction": spaces.Discrete(4),
-                                                    "local_message": spaces.MultiBinary(
-                                                        self.msg_bits
-                                                    ),
-                                                    "has_picker": spaces.MultiBinary(1),
-                                                    "target_location": item_location_space,
-                                                    "direction_picker": spaces.Discrete(4),
-                                                    "local_message_picker": spaces.MultiBinary(
-                                                        self.msg_bits
-                                                    ),
+                                                    "agent_id": agent_id_space,
+                                                    "carrying_shelf": spaces.MultiBinary(1),
+                                                    "target_location": location_space,
+                                                    "picker_id": agent_id_space,
+                                                    "target_location": location_space,
                                                     "has_shelf": spaces.MultiBinary(1),
                                                     "shelf_requested": spaces.MultiBinary(
                                                         1
@@ -555,13 +535,12 @@ class Warehouse(gym.Env):
 
         self.fast_obs = True
         ma_spaces = []
-        for sa_obs in self.observation_space_:
-            flatdim = spaces.flatdim(sa_obs)
+        for _ in self.observation_space_:
             ma_spaces += [
                 spaces.Box(
                     low=-float("inf"),
                     high=float("inf"),
-                    shape=(flatdim,),
+                    shape=(self._obs_length,),
                     dtype=np.float32,
                 )
             ]
@@ -706,55 +685,36 @@ class Warehouse(gym.Env):
             else:
                 agent_x = agent.x
                 agent_y = agent.y
-            obs.write([agent_x, agent_y, int(agent.carrying_shelf is not None)])
+            obs.write([agent.id, agent_x, agent_y, int(agent.carrying_shelf is not None)])
             if self._targets[agent.id - 1] != 0:
-                obs.write(np.eye(len(self.item_loc_dict))[self._targets[agent.id - 1] - 1])
+                obs.write(self.item_loc_dict[self._targets[agent.id - 1]])
             else:
-                obs.write(np.zeros(len(self.item_loc_dict)))
-            obs.write(np.eye(len(set(self._agent_types)))[type_mapping[agent.type]])
-            direction = np.zeros(4)
-            direction[agent.dir.value] = 1.0
-            obs.write(direction)
+                obs.write(np.zeros(2))
             obs.write([int(self._is_highway(agent.x, agent.y))])
 
             for i, (id_agent, id_shelf, id_picker) in enumerate(zip(agents, shelfs, pickers)):
                 if id_agent == 0:
-                    obs.skip(1)
-                    obs.write([1.0])
-                    obs.skip(3 + self.msg_bits)
+                    obs.skip(self._obs_bits_per_agent)
                 else:
-                    obs.write([1.0])
+                    obs.write([id_agent])
                     if self._targets[id_agent - 1] != 0:
-                        obs.write(np.eye(len(self.item_loc_dict))[self._targets[id_agent - 1] - 1])
+                        obs.write(self.item_loc_dict[self._targets[id_agent - 1]])
                     else:
-                        obs.write(np.zeros(len(self.item_loc_dict)))
-                    direction = np.zeros(4)
-                    direction[self.agents[id_agent - 1].dir.value] = 1.0
-                    obs.write(direction)
-                    if self.msg_bits > 0:
-                        obs.write(self.agents[id_agent - 1].message)
+                        obs.write(np.zeros(2))
                 if id_picker == 0:
-                    obs.skip(1)
-                    obs.write([1.0])
-                    obs.skip(3 + self.msg_bits)
+                    obs.skip(self._obs_bits_per_picker)
                 else:
-                    obs.write([1.0])
+                    obs.write([id_picker])
                     if self._targets[id_picker - 1] != 0:
-                        obs.write(np.eye(len(self.item_loc_dict))[self._targets[id_picker - 1] - 1])
+                        obs.write(self.item_loc_dict[self._targets[id_picker - 1]])
                     else:
-                        obs.write(np.zeros(len(self.item_loc_dict)))
-                    direction = np.zeros(4)
-                    direction[self.agents[id_picker - 1].dir.value] = 1.0
-                    obs.write(direction)
-                    if self.msg_bits > 0:
-                        obs.write(self.agents[id_picker - 1].message)
+                        obs.write(np.zeros(2))
                 if id_shelf == 0:
                     obs.skip(2)
                 else:
                     obs.write(
                         [1.0, int(self.shelfs[id_shelf - 1] in self.request_queue)]
                     )
-
             return obs.vector
  
         # write dictionary observations
