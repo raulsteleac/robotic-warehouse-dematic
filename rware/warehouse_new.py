@@ -992,16 +992,14 @@ class Warehouse(gym.Env):
                         if picker_id:
                             agent.carrying_shelf = self.shelfs[shelf_id - 1]
                             agent.busy = False
+                            # Reward Pickers for loading shelf
+                            if self.reward_type == RewardType.GLOBAL:
+                                rewards += 1
+                            elif self.reward_type == RewardType.INDIVIDUAL:
+                                rewards[picker_id - 1] += 1
                     elif agent.type == AgentType.AGENT:
                         agent.carrying_shelf = self.shelfs[shelf_id - 1]
                         agent.busy = False
-                    # Reward Pickers and AGVs for loading shelf
-                    if self.reward_type == RewardType.GLOBAL:
-                        rewards += 0.5
-                    elif self.reward_type == RewardType.INDIVIDUAL:
-                        rewards[agent.id - 1] += 0.5
-                        if picker_id:
-                            rewards[picker_id - 1] += 0.5
                 else:
                     agent.busy = False
             elif agent.req_action == Action.TOGGLE_LOAD and agent.carrying_shelf:
@@ -1055,11 +1053,11 @@ class Warehouse(gym.Env):
                 rewards += 1
             elif self.reward_type == RewardType.INDIVIDUAL:
                 agent_id = self.grid[_LAYER_AGENTS, x, y]
-                rewards[agent_id - 1] += 0.5
+                rewards[agent_id - 1] += 1
             elif self.reward_type == RewardType.TWO_STAGE:
                 agent_id = self.grid[_LAYER_AGENTS, x, y]
                 self.agents[agent_id - 1].has_delivered = True
-                rewards[agent_id - 1] += 0.5
+                rewards[agent_id - 1] += 1
         self._recalc_grid()
 
         if shelf_delivered:
