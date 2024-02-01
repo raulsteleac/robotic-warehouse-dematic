@@ -3,9 +3,9 @@ import logging
 from collections import defaultdict, OrderedDict
 import gym
 from gym import spaces
+from astar.search import AStar
 
 from rware.utils import MultiAgentActionSpace, MultiAgentObservationSpace
-from rware.astar import astar
 from enum import Enum
 import numpy as np
 
@@ -398,9 +398,9 @@ class Warehouse(gym.Env):
             for y in range(self.grid_size[0]):
                 self.highways[y, x] = highway_func(x, y)
                 if not highway_func(x, y) and (x, y) not in self.goals:
-                    self.item_loc_dict[item_loc_index] = (x, y)
+                    self.item_loc_dict[item_loc_index] = (y, x)
                     item_loc_index+=1
-
+    
     def _make_layout_from_str(self, layout):
         layout = layout.strip()
         layout = layout.replace(" ", "")
@@ -772,14 +772,17 @@ class Warehouse(gym.Env):
         grid = copy.deepcopy(self.grid[_LAYER_AGENTS])
         if agent.carrying_shelf:
             grid += self.grid[_LAYER_SHELFS]
-        # Goal location is available even if currently occupied
-        grid[goal[0], goal[1]] = 0
         # Pickers can move everywhere withough collisions
         if agent.type == AgentType.PICKER:
             grid[grid>0] = 0
+        # Goal location is available even if currently occupied
+        grid[goal[0], goal[1]] = 0
         grid = [list(map(int, l)) for l in (grid!=0)]
-        path = [(x, y) for y, x in astar(grid, start, goal)]
-        return path
+        astar_path = AStar(grid).search(start, goal)
+        if astar_path:
+            return [(x, y) for y, x in astar_path[1:]]
+        else:
+            return []
 
     def _recalc_grid(self):
         self.grid[:] = 0
@@ -807,6 +810,14 @@ class Warehouse(gym.Env):
                 if self.grid[_LAYER_SHELFS, coords[0], coords[1]] == 0:
                     empty_item_map[id_ - len(self.goals) - 1] = 1
         return empty_item_map
+    
+    def get_shelf_dispatch_information(self):
+        dispatch_item_map = np.zeros(len(self.item_loc_dict) - len(self.goals))
+        for id_, coords in self.item_loc_dict.items():
+            if (coords[1], coords[0]) not in self.goals:
+                if self.grid[_LAYER_SHELFS, coords[0], coords[1]]!=0 and self.grid[_LAYER_AGENTS, coords[0], coords[1]]!=0:
+                    dispatch_item_map[id_ - len(self.goals) - 1] = 1
+        return dispatch_item_map
     
     def reset(self):
         Shelf.counter = 0
@@ -934,7 +945,6 @@ class Warehouse(gym.Env):
     def step(
         self, macro_actions: List[Action]
     ) -> Tuple[List[np.ndarray], List[float], List[bool], Dict]:
-        assert len(macro_actions) == len(self.agents)
         # Logic for Macro Actions
         for agent, macro_action in zip(self.agents, macro_actions):
             # Initialize action for step
