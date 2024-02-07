@@ -82,23 +82,6 @@ def get_next_micro_action(agent_x, agent_y, agent_direction, target):
     elif turn_difference == 3:
         return Action.RIGHT
 
-def next_turn(source, target):
-    # Define the order of directions for turning
-    turn_order = [Direction.RIGHT, Direction.DOWN, Direction.LEFT, Direction.UP]
-
-    # Find the indices of the source and target directions in the turn order
-    source_index = turn_order.index(source)
-    target_index = turn_order.index(target)
-
-    # Calculate the difference in indices to determine the number of turns needed
-    turn_difference = (target_index - source_index) % len(turn_order)
-
-    # Determine the direction of the next turn
-    next_turn_direction = turn_order[(source_index + 1) % len(turn_order)]
-
-    # Return the direction of the next turn
-    return next_turn_direction
-
 class RewardType(Enum):
     GLOBAL = 0
     INDIVIDUAL = 1
@@ -329,10 +312,12 @@ class Warehouse(gym.Env):
             sa_action_space = spaces.MultiDiscrete(sa_action_space)
 
         self.action_space_ = spaces.Tuple(tuple(self.n_agents_ * [sa_action_space]))
+
         self.request_queue_size = request_queue_size
         self.request_queue = []
 
         self.agents: List[Agent] = []
+        
         self._targets = np.zeros(len(self.item_loc_dict), dtype=int)
         self.same_action_count = np.ones(self.n_agents_)
         self._same_action_threshold = 100
@@ -481,55 +466,30 @@ class Warehouse(gym.Env):
         else:
             self._obs_sensor_locations = (1 + 2 * self.sensor_range) ** 2
         self._obs_length = (
-            self._obs_bits_for_self
-            + self._obs_sensor_locations * (self._obs_bits_per_agent
-            + self._obs_bits_per_picker 
-            + self._obs_bits_per_shelf
+            self._obs_bits_for_self * self.n_agents_
+            + self._obs_sensor_locations * (self._obs_bits_per_shelf
             + self._obs_bits_for_requests)
         )
 
-        self.observation_space_ = spaces.Tuple(
-            tuple(
-                [
-                    spaces.Dict(
-                        OrderedDict(
-                            {
-                                "self": spaces.Dict(
-                                    OrderedDict(
-                                        {
-                                            "agent_id": agent_id_space,
-                                            "carrying_shelf": spaces.MultiBinary(1),
-                                            "location": location_space,
-                                            "target_location": location_space,
-                                        }
-                                    )
-                                ),
-                                "sensors": spaces.Tuple(
-                                    self._obs_sensor_locations
-                                    * (
-                                        spaces.Dict(
-                                            OrderedDict(
-                                                {
-                                                    "agent_id": agent_id_space,
-                                                    "target_location": location_space,
-                                                    "picker_id": agent_id_space,
-                                                    "target_location": location_space,
-                                                    "has_shelf": spaces.MultiBinary(1),
-                                                    "shelf_requested": spaces.MultiBinary(
-                                                        1
-                                                    ),
-                                                }
-                                            )
-                                        ),
-                                    )
-                                ),
-                            }
-                        )
-                    )
-                    for _ in range(self.n_agents_)
-                ]
-            )
-        )
+        obs = {}
+        for agent_id in range(self.n_agents_):
+            obs[f"agent{agent_id+1}"] = spaces.Dict(OrderedDict(
+                {
+                    "agent_id": agent_id_space,
+                    "carrying_shelf": spaces.MultiBinary(1),
+                    "location": location_space,
+                    "target_location": location_space,
+                }
+            ))
+                
+        individual_location_obs = spaces.Dict(OrderedDict(
+            {
+                "has_shelf": spaces.MultiBinary(1),
+                "shelf_requested": spaces.MultiBinary(1),
+            }
+        ))
+        obs["sensors"] = spaces.Tuple(self._obs_sensor_locations * (individual_location_obs,))
+        self.observation_space_ = spaces.Tuple(tuple([spaces.Dict(OrderedDict(obs)) for _ in range(self.n_agents_)]))
 
     def _use_fast_obs(self):
         if self.fast_obs:
@@ -693,23 +653,16 @@ class Warehouse(gym.Env):
             else:
                 obs.write(np.zeros(2))
 
-            for i, (id_agent, id_shelf, id_picker) in enumerate(zip(agents, shelfs, pickers)):
-                if id_agent == 0:
-                    obs.skip(self._obs_bits_per_agent)
-                else:
-                    obs.write([id_agent])
-                    if self._targets[id_agent - 1] != 0:
-                        obs.write(self.item_loc_dict[self._targets[id_agent - 1]])
+            for i in range(self.n_agents_):
+                if i != agent.id - 1:
+                    agent_ = self.agents[i]
+                    obs.write([agent_.id, int(agent_.carrying_shelf is not None), agent_.x, agent_.y ])
+                    if self._targets[agent_.id - 1] != 0:
+                        obs.write(self.item_loc_dict[self._targets[agent_.id - 1]])
                     else:
                         obs.write(np.zeros(2))
-                if id_picker == 0:
-                    obs.skip(self._obs_bits_per_picker)
-                else:
-                    obs.write([id_picker])
-                    if self._targets[id_picker - 1] != 0:
-                        obs.write(self.item_loc_dict[self._targets[id_picker - 1]])
-                    else:
-                        obs.write(np.zeros(2))
+
+            for i, id_shelf in enumerate(shelfs):
                 if id_shelf == 0:
                     obs.skip(2)
                 else:
@@ -796,12 +749,13 @@ class Warehouse(gym.Env):
                 else:
                     self.grid[_LAYER_AGENTS, agent.y, agent.x] = agent.id
     
-    def get_shelf_request_information(self):
+    def get_shelf_request_information(self, print_=True):
         request_item_map = np.zeros(len(self.item_loc_dict) - len(self.goals))
+        requested_shelf_coords = [(shelf.y, shelf.x) for shelf in self.request_queue]
         for id_, coords in self.item_loc_dict.items():
             if (coords[1], coords[0]) not in self.goals:
                 if self.grid[_LAYER_SHELFS, coords[0], coords[1]]!=0:
-                    request_item_map[id_ - len(self.goals) - 1] = int(self.shelfs[self.grid[_LAYER_SHELFS, coords[0], coords[1]] - 1] in self.request_queue)
+                    request_item_map[id_ - len(self.goals) - 1] = int((coords[0], coords[1]) in requested_shelf_coords)
         return request_item_map
     
     def get_empty_shelf_informatlocationsion(self):
@@ -817,7 +771,8 @@ class Warehouse(gym.Env):
         for id_, coords in self.item_loc_dict.items():
             if (coords[1], coords[0]) not in self.goals:
                 if self.grid[_LAYER_SHELFS, coords[0], coords[1]]!=0 and self.grid[_LAYER_AGENTS, coords[0], coords[1]]!=0:
-                    dispatch_item_map[id_ - len(self.goals) - 1] = 1
+                    if self.agents[self.grid[_LAYER_AGENTS, coords[0], coords[1]] - 1].req_action == Action.TOGGLE_LOAD:
+                        dispatch_item_map[id_ - len(self.goals) - 1] = 1
         return dispatch_item_map
     
     def reset(self):
@@ -928,7 +883,9 @@ class Warehouse(gym.Env):
                     new_x, new_y = agent.req_location(self.grid_size)
                     if new_x == other.x and new_y == other.y and other.fixing_clash==0:
                         agent.req_action = Action.NOOP
-                        if other.req_action == Action.FORWARD or other.req_action == Action.NOOP or other.req_action == Action.TOGGLE_LOAD:
+                        if agent.path and agent.path[-1] == (other.x, other.y):
+                            agent.busy = False
+                        if True: # other.req_action == Action.FORWARD or other.req_action == Action.NOOP or other.req_action == Action.TOGGLE_LOAD:
                             agent.fixing_clash = self.fixing_clash_time
                             if agent.path:
                                 new_path = self.find_path((agent.y, agent.x), (agent.path[-1][1] ,agent.path[-1][0]), agent)
@@ -986,7 +943,7 @@ class Warehouse(gym.Env):
         
         rewards = np.zeros(self.n_agents_)
         # Add step penalty
-        rewards -= 0.01
+        # rewards -= 0.01
         for agent in self.agents:
             agent.prev_x, agent.prev_y = agent.x, agent.y
             if agent.req_action == Action.FORWARD:
@@ -1009,6 +966,7 @@ class Warehouse(gym.Env):
                                 rewards += 0.5
                             elif self.reward_type == RewardType.INDIVIDUAL:
                                 rewards[picker_id - 1] += 0.5
+                                # rewards[agent.id - 1] += 0.25
                     elif agent.type == AgentType.AGENT:
                         agent.carrying_shelf = self.shelfs[shelf_id - 1]
                         agent.busy = False
