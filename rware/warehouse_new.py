@@ -354,8 +354,9 @@ class Warehouse(gym.Env):
     def _make_layout_from_params(self, shelf_columns, shelf_rows, column_height):
         assert shelf_columns % 2 == 1, "Only odd number of shelf columns is supported"
 
+        self._extra_rows = 0
         self.grid_size = (
-            (column_height + 1) * shelf_rows + 2,
+            (column_height + 1) * shelf_rows + 2 + self._extra_rows,
             (2 + 1) * shelf_columns + 1,
         )
         self.column_height = column_height
@@ -374,9 +375,10 @@ class Warehouse(gym.Env):
             or (y % (self.column_height + 1) == 0)  # horizontal highways
             or (y == self.grid_size[0] - 1)  # delivery row
             or (  # remove a box for queuing
-                (y > self.grid_size[0] - (self.column_height + 3))
+                (y > self.grid_size[0] - (self.column_height + 3 + self._extra_rows))
                 and ((x == self.grid_size[1] // 2 - 1) or (x == self.grid_size[1] // 2))
             )
+            or y in [self.goals[0][1] - i - 1 for i in range(self._extra_rows)]
         )
         item_loc_index = 1
         self.item_loc_dict = {}
@@ -724,7 +726,12 @@ class Warehouse(gym.Env):
     
     def find_path(self, start, goal, agent):
         grid = copy.deepcopy(self.grid[_LAYER_AGENTS])
-        # grid[goal[0], goal[1]] = 0
+        # for goal_ in self.goals:
+        #     if not (goal[0]==goal_[1] and goal[1]==goal_[0]):
+        #         grid[goal_[1], goal_[0]] = 1
+        
+        #grid[goal[0], goal[1]] = 0
+        
         if agent.carrying_shelf:
             grid += self.grid[_LAYER_SHELFS]
         # Pickers can move everywhere withough collisions
@@ -881,20 +888,18 @@ class Warehouse(gym.Env):
             for other in agent_list:
                 if agent.id != other.id:
                     new_x, new_y = agent.req_location(self.grid_size)
-                    if new_x == other.x and new_y == other.y and other.fixing_clash==0:
+                    if new_x == other.x and new_y == other.y:
                         agent.req_action = Action.NOOP
-                        if agent.path and agent.path[-1] == (other.x, other.y):
-                            agent.busy = False
-                        if True: # other.req_action == Action.FORWARD or other.req_action == Action.NOOP or other.req_action == Action.TOGGLE_LOAD:
-                            agent.fixing_clash = self.fixing_clash_time
-                            if agent.path:
+                        if other.fixing_clash==0:
+                            if agent.path and agent.path[-1] == (other.x, other.y):
+                                agent.busy = False
+                            if other.req_action == Action.FORWARD or other.req_action == Action.NOOP or other.req_action == Action.TOGGLE_LOAD:
+                                agent.fixing_clash = self.fixing_clash_time
                                 new_path = self.find_path((agent.y, agent.x), (agent.path[-1][1] ,agent.path[-1][0]), agent)
                                 if new_path:
                                     agent.path = new_path
                                 else:
                                     agent.fixing_clash = 0
-                            else:
-                                agent.busy = False
 
         commited_agents = set([self.agents[id_ - 1] for id_ in commited_agents])
         failed_agents = set(agent_list) - commited_agents
