@@ -319,8 +319,8 @@ class Warehouse(gym.Env):
         self.agents: List[Agent] = []
         
         self._targets = np.zeros(len(self.item_loc_dict), dtype=int)
-        self.same_action_count = np.ones(self.n_agents_)
-        self._same_action_threshold = 100
+        self.stuck_count = []
+        self._stuck_threshold = 10
         # default values:
         self.fast_obs = None
         self.image_obs = None
@@ -457,7 +457,7 @@ class Warehouse(gym.Env):
         location_space = spaces.Box(low=0.0, high=max(self.grid_size), shape=(2,), dtype=np.float32)
         agent_id_space = spaces.Box(low=0.0, high=self.n_agents_, shape=(1,), dtype=np.float32)
 
-        self._obs_bits_for_self = spaces.flatdim(agent_id_space) + spaces.flatdim(location_space) + 1  + spaces.flatdim(location_space)
+        self._obs_bits_for_self = spaces.flatdim(agent_id_space) + 1 + 1 + spaces.flatdim(location_space)  + spaces.flatdim(location_space)
         self._obs_bits_per_agent = spaces.flatdim(agent_id_space) + spaces.flatdim(location_space)
         self._obs_bits_per_picker = spaces.flatdim(agent_id_space) + spaces.flatdim(location_space)
         self._obs_bits_per_shelf = 1
@@ -479,6 +479,7 @@ class Warehouse(gym.Env):
                 {
                     "agent_id": agent_id_space,
                     "carrying_shelf": spaces.MultiBinary(1),
+                    "shelf_requested": spaces.MultiBinary(1),
                     "location": location_space,
                     "target_location": location_space,
                 }
@@ -638,7 +639,6 @@ class Warehouse(gym.Env):
         agents = padded_agents[min_y:max_y, min_x:max_x].reshape(-1)
         shelfs = padded_shelfs[min_y:max_y, min_x:max_x].reshape(-1)
         pickers = padded_pickers[min_y:max_y, min_x:max_x].reshape(-1)
-        type_mapping = {type_:i for i, type_ in enumerate(set(self._agent_types))}
         if self.fast_obs:
             # write flattened observations
             obs = _VectorWriter(self.observation_space_[agent.id - 1].shape[0])
@@ -649,11 +649,16 @@ class Warehouse(gym.Env):
             else:
                 agent_x = agent.x
                 agent_y = agent.y
-            obs.write([agent.id, int(agent.carrying_shelf is not None), agent_x, agent_y ])
+            obs.write([agent.id])
+            if agent.carrying_shelf:
+                obs.write([1, int(agent.carrying_shelf in self.request_queue)])
+            else:
+                obs.skip(2)
+            obs.write([agent_x, agent_y])
             if self._targets[agent.id - 1] != 0:
                 obs.write(self.item_loc_dict[self._targets[agent.id - 1]])
             else:
-                obs.write(np.zeros(2))
+                obs.skip(2)
 
             for i in range(self.n_agents_):
                 if i != agent.id - 1:
@@ -662,7 +667,7 @@ class Warehouse(gym.Env):
                     if self._targets[agent_.id - 1] != 0:
                         obs.write(self.item_loc_dict[self._targets[agent_.id - 1]])
                     else:
-                        obs.write(np.zeros(2))
+                        obs.skip(2)
 
             for i, id_shelf in enumerate(shelfs):
                 if id_shelf == 0:
@@ -726,14 +731,16 @@ class Warehouse(gym.Env):
     
     def find_path(self, start, goal, agent):
         grid = copy.deepcopy(self.grid[_LAYER_AGENTS])
-        # for goal_ in self.goals:
-        #     if not (goal[0]==goal_[1] and goal[1]==goal_[0]):
-        #         grid[goal_[1], goal_[0]] = 1
-        
-        #grid[goal[0], goal[1]] = 0
-        
+
         if agent.carrying_shelf:
             grid += self.grid[_LAYER_SHELFS]
+            # Agents can only travel through highways if carrying a shelf
+            for x in range(self.grid_size[1]):
+                for y in range(self.grid_size[0]):
+                    grid[y, x] += not self._is_highway(x, y)
+            grid[start[0], start[1]] = 0
+        
+        grid[goal[0], goal[1]] = 0
         # Pickers can move everywhere withough collisions
         if agent.type == AgentType.PICKER:
             grid[grid>0] = 0
@@ -820,6 +827,7 @@ class Warehouse(gym.Env):
             np.random.choice(self.shelfs, size=self.request_queue_size, replace=False)
         )
         self._targets = np.zeros(len(self.agents), dtype=int)
+        self.stuck_count = [[0, (agent.x, agent.y)] for agent in self.agents]
         return tuple([self._make_obs(agent) for agent in self.agents])
         # for s in self.shelfs:
         #     self.grid[0, s.y, s.x] = 1
@@ -887,19 +895,19 @@ class Warehouse(gym.Env):
         for agent in agent_list:
             for other in agent_list:
                 if agent.id != other.id:
-                    new_x, new_y = agent.req_location(self.grid_size)
-                    if new_x == other.x and new_y == other.y:
-                        agent.req_action = Action.NOOP
-                        if other.fixing_clash==0:
-                            if agent.path and agent.path[-1] == (other.x, other.y):
-                                agent.busy = False
-                            if other.req_action == Action.FORWARD or other.req_action == Action.NOOP or other.req_action == Action.TOGGLE_LOAD:
-                                agent.fixing_clash = self.fixing_clash_time
-                                new_path = self.find_path((agent.y, agent.x), (agent.path[-1][1] ,agent.path[-1][0]), agent)
-                                if new_path:
-                                    agent.path = new_path
-                                else:
-                                    agent.fixing_clash = 0
+                    agent_new_x, agent_new_y = agent.req_location(self.grid_size)
+                    other_new_x, other_new_y = other.req_location(self.grid_size)
+                    if agent_new_x == other.x and agent_new_y == other.y: 
+                        agent.req_action = Action.NOOP # If the agent's actions leads them in the position of another STOP
+                        if other_new_x in [agent.x, other.x] and other_new_y in [agent.y, other.y]: # If the other agent stays put or wants to go to this location
+                            if not other.req_action in (Action.LEFT, Action.RIGHT): # If the other is not in the middle of a turn
+                                if other.fixing_clash==0:# If the others are not already fixing the clash
+                                    agent.fixing_clash = self.fixing_clash_time # Agent start time for clash fixing
+                                    new_path = self.find_path((agent.y, agent.x), (agent.path[-1][1] ,agent.path[-1][0]), agent)
+                                    if new_path != []: # If the agent can find an alternative path, assign it if not let the other solve the clash
+                                        agent.path = new_path
+                                    else:
+                                        agent.fixing_clash = 0
 
         commited_agents = set([self.agents[id_ - 1] for id_ in commited_agents])
         failed_agents = set(agent_list) - commited_agents
@@ -927,7 +935,6 @@ class Warehouse(gym.Env):
                         agent.busy = True
                         agent.req_action = get_next_micro_action(agent.x, agent.y, agent.dir, agent.path[0])
                         self._targets[agent.id-1] = macro_action
-                        self.same_action_count[agent.id - 1] = 1
             else:
                 # Check agent finished the give path if not continue the path
                 if agent.path == []:
@@ -936,12 +943,19 @@ class Warehouse(gym.Env):
                     if agent.type != AgentType.AGV:
                         agent.busy = False
                 else:
-                    agent.req_action = get_next_micro_action(agent.x, agent.y, agent.dir, agent.path[0])
-                    self.same_action_count[agent.id - 1] += 1
-        # Unfreeze agents if stuck following an "impossible" action
-        for agent, count in zip(self.agents, self.same_action_count):
-            if count == self._same_action_threshold:
-                agent.busy = False
+                    agent.req_action = get_next_micro_action(agent.x, agent.y, agent.dir, agent.path[0])        
+
+        # Restart agents if they are stuck at the same position
+        # This can happen when their goal is occupied after reaching their last step/re-calculating a path
+        for agent in self.agents:
+            if agent.req_action  not in (Action.TOGGLE_LOAD, Action.LEFT, Action.RIGHT): # Don't count loading or changing directions
+                pos = self.stuck_count[agent.id - 1][1]
+                if agent.x == pos[0] and agent.y == pos[1]:
+                    self.stuck_count[agent.id - 1][0] += 1
+                else:
+                    self.stuck_count[agent.id - 1] = [0, (agent.x, agent.y)]
+                if self.stuck_count[agent.id - 1][0] > self._stuck_threshold:
+                    agent.busy = False
         #  agents that can_carry should not collide
         carry_agents = [agent for agent in self.agents if agent.type != AgentType.PICKER]
         self.resolve_move_conflict(carry_agents)
@@ -980,15 +994,15 @@ class Warehouse(gym.Env):
             elif agent.req_action == Action.TOGGLE_LOAD and agent.carrying_shelf:
                 picker_id = self.grid[_LAYER_PICKERS, agent.y, agent.x]
                 if (agent.x, agent.y) in self.goals:
-                    agent.busy=False
+                    agent.busy = False
                     continue
                 if not self._is_highway(agent.x, agent.y):
                     if agent.type == AgentType.AGENT:
                         agent.carrying_shelf = None
-                        agent.busy=False
+                        agent.busy = False
                     if agent.type == AgentType.AGV and picker_id:
                         agent.carrying_shelf = None
-                        agent.busy=False
+                        agent.busy = False
                         # Reward Pickers for un-loading shelf
                         if self.reward_type == RewardType.GLOBAL:
                             rewards += 0.5
