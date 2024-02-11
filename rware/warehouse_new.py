@@ -457,9 +457,7 @@ class Warehouse(gym.Env):
         location_space = spaces.Box(low=0.0, high=max(self.grid_size), shape=(2,), dtype=np.float32)
         agent_id_space = spaces.Box(low=0.0, high=self.n_agents_, shape=(1,), dtype=np.float32)
 
-        self._obs_bits_for_self = spaces.flatdim(agent_id_space) + 1 + 1 + spaces.flatdim(location_space)  + spaces.flatdim(location_space)
-        self._obs_bits_per_agent = spaces.flatdim(agent_id_space) + spaces.flatdim(location_space)
-        self._obs_bits_per_picker = spaces.flatdim(agent_id_space) + spaces.flatdim(location_space)
+        self._obs_bits_for_self = spaces.flatdim(agent_id_space)  + 3 + spaces.flatdim(location_space)  + spaces.flatdim(location_space)
         self._obs_bits_per_shelf = 1
         self._obs_bits_for_requests = 1
 
@@ -478,6 +476,7 @@ class Warehouse(gym.Env):
             obs[f"agent{agent_id+1}"] = spaces.Dict(OrderedDict(
                 {
                     "agent_id": agent_id_space,
+                    "busy_state": spaces.MultiBinary(1),
                     "carrying_shelf": spaces.MultiBinary(1),
                     "shelf_requested": spaces.MultiBinary(1),
                     "location": location_space,
@@ -649,7 +648,7 @@ class Warehouse(gym.Env):
             else:
                 agent_x = agent.x
                 agent_y = agent.y
-            obs.write([agent.id])
+            obs.write([agent.id, agent.busy])
             if agent.carrying_shelf:
                 obs.write([1, int(agent.carrying_shelf in self.request_queue)])
             else:
@@ -663,7 +662,12 @@ class Warehouse(gym.Env):
             for i in range(self.n_agents_):
                 if i != agent.id - 1:
                     agent_ = self.agents[i]
-                    obs.write([agent_.id, int(agent_.carrying_shelf is not None), agent_.x, agent_.y ])
+                    obs.write([agent_.id, agent_.busy])
+                    if agent_.carrying_shelf:
+                        obs.write([1, int(agent_.carrying_shelf in self.request_queue)])
+                    else:
+                        obs.skip(2)
+                    obs.write([agent_.x, agent_.y])
                     if self._targets[agent_.id - 1] != 0:
                         obs.write(self.item_loc_dict[self._targets[agent_.id - 1]])
                     else:
@@ -761,7 +765,7 @@ class Warehouse(gym.Env):
                 else:
                     self.grid[_LAYER_AGENTS, agent.y, agent.x] = agent.id
     
-    def get_shelf_request_information(self, print_=True):
+    def get_shelf_request_information(self):
         request_item_map = np.zeros(len(self.item_loc_dict) - len(self.goals))
         requested_shelf_coords = [(shelf.y, shelf.x) for shelf in self.request_queue]
         for id_, coords in self.item_loc_dict.items():
