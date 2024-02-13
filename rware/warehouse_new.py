@@ -353,11 +353,10 @@ class Warehouse(gym.Env):
 
     def _make_layout_from_params(self, shelf_columns, shelf_rows, column_height):
         assert shelf_columns % 2 == 1, "Only odd number of shelf columns is supported"
-
-        self._extra_rows = 0
+        self._extra_rows_columns = 1
         self.grid_size = (
-            (column_height + 1) * shelf_rows + 2 + self._extra_rows,
-            (2 + 1) * shelf_columns + 1,
+            1 + (column_height + 1 + self._extra_rows_columns) * shelf_rows + 1 + self._extra_rows_columns,
+            (2 + 1 + self._extra_rows_columns) * shelf_columns + 1  + self._extra_rows_columns,
         )
         self.column_height = column_height
         self.grid = np.zeros((_COLLISION_LAYERS, *self.grid_size), dtype=np.int32)
@@ -370,15 +369,27 @@ class Warehouse(gym.Env):
 
         self.highways = np.zeros(self.grid_size, dtype=np.int32)
 
+        accepted_x = []
+        for i in range(0, self.grid_size[1],  3 + self._extra_rows_columns):
+            accepted_x.append(i)
+            for j in range(self._extra_rows_columns):
+                accepted_x.append(i+j+1)
+
+        accepted_y = []
+        for i in range(0, self.grid_size[0],  1 + self._extra_rows_columns + column_height):
+            accepted_y.append(i)
+            for j in range(self._extra_rows_columns):
+                accepted_y.append(i+j+1)
         highway_func = lambda x, y: (
-            (x % 3 == 0)  # vertical highways
-            or (y % (self.column_height + 1) == 0)  # horizontal highways
-            or (y == self.grid_size[0] - 1)  # delivery row
+            ((x < 1 + self._extra_rows_columns or x >= self.grid_size[1] - 1 - self._extra_rows_columns) 
+             or (y < 1 + self._extra_rows_columns or y >= self.grid_size[0] - 1 - self._extra_rows_columns))
+            or x in accepted_x  # vertical highways
+            or y in accepted_y  # vertical highways
             or (  # remove a box for queuing
-                (y > self.grid_size[0] - (self.column_height + 3 + self._extra_rows))
+                (y > self.grid_size[0] - (self.column_height + 3 + self._extra_rows_columns))
                 and ((x == self.grid_size[1] // 2 - 1) or (x == self.grid_size[1] // 2))
             )
-            or y in [self.goals[0][1] - i - 1 for i in range(self._extra_rows)]
+            or y in [self.goals[0][1] - i - 1 for i in range(self._extra_rows_columns)]
         )
         item_loc_index = 1
         self.item_loc_dict = {}
@@ -942,6 +953,7 @@ class Warehouse(gym.Env):
             else:
                 # Check agent finished the give path if not continue the path
                 if agent.path == []:
+                    #self._targets[agent.id-1] = 0
                     if agent.type != AgentType.PICKER:
                         agent.req_action = Action.TOGGLE_LOAD
                     if agent.type != AgentType.AGV:
