@@ -16,11 +16,12 @@ _AXIS_Z = 0
 _AXIS_Y = 1
 _AXIS_X = 2
 
-_COLLISION_LAYERS = 3
+_COLLISION_LAYERS = 4
 
 _LAYER_AGENTS = 0
 _LAYER_SHELFS = 1
-_LAYER_PICKERS = 2
+_LAYER_CARRIED_SHELFS = 2
+_LAYER_PICKERS = 3
 
 class _VectorWriter:
     def __init__(self, size: int):
@@ -136,9 +137,9 @@ class Agent(Entity):
     @property
     def collision_layers(self):
         if self.loaded:
-            return (_LAYER_AGENTS, _LAYER_SHELFS)
+            return (_LAYER_AGENTS)
         else:
-            return (_LAYER_AGENTS,)
+            return (_LAYER_AGENTS)
 
     def req_location(self, grid_size) -> Tuple[int, int]:
         if self.req_action != Action.FORWARD:
@@ -175,7 +176,7 @@ class Shelf(Entity):
 
     @property
     def collision_layers(self):
-        return (_LAYER_SHELFS,)
+        return ()
 
 
 class Warehouse(gym.Env):
@@ -353,7 +354,7 @@ class Warehouse(gym.Env):
 
     def _make_layout_from_params(self, shelf_columns, shelf_rows, column_height):
         assert shelf_columns % 2 == 1, "Only odd number of shelf columns is supported"
-        self._extra_rows_columns = 1
+        self._extra_rows_columns = 0
         self.grid_size = (
             1 + (column_height + 1 + self._extra_rows_columns) * shelf_rows + 1 + self._extra_rows_columns,
             (2 + 1 + self._extra_rows_columns) * shelf_columns + 1  + self._extra_rows_columns,
@@ -469,7 +470,7 @@ class Warehouse(gym.Env):
         agent_id_space = spaces.Box(low=0.0, high=self.n_agents_, shape=(1,), dtype=np.float32)
 
         self._obs_bits_for_self = spaces.flatdim(agent_id_space)  + 3 + spaces.flatdim(location_space)  + spaces.flatdim(location_space)
-        self._obs_bits_per_shelf = 1
+        self._obs_bits_per_shelf = 2
         self._obs_bits_for_requests = 1
 
         if self.global_observations:
@@ -498,6 +499,7 @@ class Warehouse(gym.Env):
         individual_location_obs = spaces.Dict(OrderedDict(
             {
                 "has_shelf": spaces.MultiBinary(1),
+                "has_carried_shelf": spaces.MultiBinary(1),
                 "shelf_requested": spaces.MultiBinary(1),
             }
         ))
@@ -683,13 +685,13 @@ class Warehouse(gym.Env):
                         obs.write(self.item_loc_dict[self._targets[agent_.id - 1]])
                     else:
                         obs.skip(2)
-
+            carried_shelfs = [agent.carrying_shelf.id for agent in self.agents if agent.carrying_shelf]
             for i, id_shelf in enumerate(shelfs):
                 if id_shelf == 0:
                     obs.skip(2)
                 else:
                     obs.write(
-                        [1.0, int(self.shelfs[id_shelf - 1] in self.request_queue)]
+                        [1.0, id_shelf in carried_shelfs , int(self.shelfs[id_shelf - 1] in self.request_queue)]
                     )
             return obs.vector
  
@@ -745,18 +747,17 @@ class Warehouse(gym.Env):
         return obs
     
     def find_path(self, start, goal, agent):
-        grid = copy.deepcopy(self.grid[_LAYER_AGENTS])
-
-        if agent.carrying_shelf:
-            grid += self.grid[_LAYER_SHELFS]
+        grid = np.zeros(self.grid_size)
+        if agent.type in [AgentType.AGV, AgentType.AGENT]:
+            grid += self.grid[_LAYER_AGENTS]
+            if agent.carrying_shelf and self.grid[_LAYER_SHELFS, goal[0], goal[1]]:
+                return []
+        if agent.type == AgentType.PICKER:
             # Agents can only travel through highways if carrying a shelf
             for x in range(self.grid_size[1]):
                 for y in range(self.grid_size[0]):
-                    if y!=goal[0] and x!=goal[1]:
-                        grid[y, x] += not self._is_highway(x, y)
-        # Pickers can move everywhere withough collisions
-        if agent.type == AgentType.PICKER:
-            grid[grid>0] = 0
+                    grid[y, x] += not self._is_highway(x, y)
+                grid[goal[0], goal[1]] = 0
         # Goal location is available even if currently occupied
         grid = [list(map(int, l)) for l in (grid!=0)]
         astar_path = AStar(grid).search(start, goal)
@@ -767,14 +768,17 @@ class Warehouse(gym.Env):
 
     def _recalc_grid(self):
         self.grid[:] = 0
+        carried_shelf_ids = [agent.carrying_shelf.id for agent in self.agents if agent.carrying_shelf]
         for s in self.shelfs:
-            self.grid[_LAYER_SHELFS, s.y, s.x] = s.id
-
-            for agent in self.agents:
-                if agent.type == AgentType.PICKER:
-                    self.grid[_LAYER_PICKERS, agent.y, agent.x] = agent.id
-                else:
-                    self.grid[_LAYER_AGENTS, agent.y, agent.x] = agent.id
+            if s.id not in carried_shelf_ids:
+                self.grid[_LAYER_SHELFS, s.y, s.x] = s.id
+        for agent in self.agents:
+            if agent.type == AgentType.PICKER:
+                self.grid[_LAYER_PICKERS, agent.y, agent.x] = agent.id
+            else:
+                self.grid[_LAYER_AGENTS, agent.y, agent.x] = agent.id
+            if agent.carrying_shelf:
+                self.grid[_LAYER_CARRIED_SHELFS, agent.y, agent.x] = agent.carrying_shelf.id
     
     def get_shelf_request_information(self):
         request_item_map = np.zeros(len(self.item_loc_dict) - len(self.goals))
@@ -797,7 +801,7 @@ class Warehouse(gym.Env):
         dispatch_item_map = np.zeros(len(self.item_loc_dict) - len(self.goals))
         for id_, coords in self.item_loc_dict.items():
             if (coords[1], coords[0]) not in self.goals:
-                if self.grid[_LAYER_SHELFS, coords[0], coords[1]]!=0 and self.grid[_LAYER_AGENTS, coords[0], coords[1]]!=0:
+                if self.grid[_LAYER_CARRIED_SHELFS, coords[0], coords[1]]!=0 and self.grid[_LAYER_AGENTS, coords[0], coords[1]]!=0:
                     if self.agents[self.grid[_LAYER_AGENTS, coords[0], coords[1]] - 1].req_action == Action.TOGGLE_LOAD:
                         dispatch_item_map[id_ - len(self.goals) - 1] = 1
         return dispatch_item_map
@@ -820,14 +824,18 @@ class Warehouse(gym.Env):
             )
             if not self._is_highway(x, y)
         ]
-
-        # spawn agents at random locations
-        agent_locs = np.random.choice(
-            np.arange(self.grid_size[0] * self.grid_size[1]),
+        self._higway_locs = np.array([(y, x) for y, x in zip(
+                np.indices(self.grid_size)[0].reshape(-1),
+                np.indices(self.grid_size)[1].reshape(-1),
+            ) if self._is_highway(x, y)])
+        
+        # Spawn agents on higwahy locations 
+        agent_loc_ids = np.random.choice(
+            np.arange(len(self._higway_locs)),
             size=self.n_agents_,
             replace=False,
         )
-        agent_locs = np.unravel_index(agent_locs, self.grid_size)
+        agent_locs = [self._higway_locs[agent_loc_ids, 0], self._higway_locs[agent_loc_ids, 1]]
         # and direction
         agent_dirs = np.random.choice([d for d in Direction], size=self.n_agents_)
         self.agents = [
@@ -861,24 +869,23 @@ class Warehouse(gym.Env):
             start = agent.x, agent.y
             target = agent.req_location(self.grid_size)
 
-            if (
-                agent.carrying_shelf
-                and start != target
-                and self.grid[_LAYER_SHELFS, target[1], target[0]]
-                and not (
-                    self.grid[_LAYER_AGENTS, target[1], target[0]]
-                    and self.agents[
-                        self.grid[_LAYER_AGENTS, target[1], target[0]] - 1
-                    ].carrying_shelf
-                )
-            ):
-                # there's a standing shelf at the target location
-                # our agent is carrying a shelf so there's no way
-                # this movement can succeed. Cancel it.
-                agent.req_action = Action.NOOP
-                G.add_edge(start, start)
-            else:
-                G.add_edge(start, target)
+            # if (
+            #     agent.carrying_shelf
+            #     and start != target
+            #     and not (
+            #         self.grid[_LAYER_AGENTS, target[1], target[0]]
+            #         and self.agents[
+            #             self.grid[_LAYER_AGENTS, target[1], target[0]] - 1
+            #         ].carrying_shelf
+            #     )
+            # ):
+            #     # there's a standing shelf at the target location
+            #     # our agent is carrying a shelf so there's no way
+            #     # this movement can succeed. Cancel it.
+            #     agent.req_action = Action.NOOP
+            #     G.add_edge(start, start)
+            # else:
+            G.add_edge(start, target)
 
         wcomps = [G.subgraph(c).copy() for c in nx.weakly_connected_components(G)]
         for comp in wcomps:
@@ -959,8 +966,11 @@ class Warehouse(gym.Env):
                     if agent.type != AgentType.AGV:
                         agent.busy = False
                 else:
-                    agent.req_action = get_next_micro_action(agent.x, agent.y, agent.dir, agent.path[0])        
-
+                    agent.req_action = get_next_micro_action(agent.x, agent.y, agent.dir, agent.path[0])
+                    # If agent is at the end of a path and carrying a shelf and the target location is already occupied restart agent   
+                    if len(agent.path) == 1 and agent.carrying_shelf and self.grid[_LAYER_SHELFS, agent.path[-1][1], agent.path[-1][0]]:
+                        agent.req_action = Action.NOOP
+                        agent.busy = False
         # Restart agents if they are stuck at the same position
         # This can happen when their goal is occupied after reaching their last step/re-calculating a path
         stucks_count = 0
@@ -1004,6 +1014,8 @@ class Warehouse(gym.Env):
                         picker_id = self.grid[_LAYER_PICKERS, agent.y, agent.x]
                         if picker_id:
                             agent.carrying_shelf = self.shelfs[shelf_id - 1]
+                            self.grid[_LAYER_SHELFS, agent.y, agent.x] = 0
+                            self.grid[_LAYER_CARRIED_SHELFS, agent.y, agent.x] = shelf_id
                             agent.busy = False
                             # Reward Pickers for loading shelf
                             if self.reward_type == RewardType.GLOBAL:
@@ -1023,9 +1035,13 @@ class Warehouse(gym.Env):
                     continue
                 if not self._is_highway(agent.x, agent.y):
                     if agent.type == AgentType.AGENT:
+                        self.grid[_LAYER_SHELFS, agent.y, agent.x] =  agent.carrying_shelf.id
+                        self.grid[_LAYER_CARRIED_SHELFS, agent.y, agent.x] = 0
                         agent.carrying_shelf = None
                         agent.busy = False
                     if agent.type == AgentType.AGV and picker_id:
+                        self.grid[_LAYER_SHELFS, agent.y, agent.x] =  agent.carrying_shelf.id
+                        self.grid[_LAYER_CARRIED_SHELFS, agent.y, agent.x] = 0
                         agent.carrying_shelf = None
                         agent.busy = False
                         # Reward Pickers for un-loading shelf
@@ -1040,7 +1056,7 @@ class Warehouse(gym.Env):
         shelf_delivered = False
         shelf_deliveries = 0
         for y, x in self.goals:
-            shelf_id = self.grid[_LAYER_SHELFS, x, y]
+            shelf_id = self.grid[_LAYER_CARRIED_SHELFS, x, y]
             if not shelf_id:
                 continue
             shelf = self.shelfs[shelf_id - 1]
@@ -1051,8 +1067,9 @@ class Warehouse(gym.Env):
             shelf_delivered = True
             shelf_deliveries += 1
             # remove from queue and replace it
+            carried_shels = [agent.carrying_shelf for agent in self.agents if agent.carrying_shelf]
             new_request = np.random.choice(
-                list(set(self.shelfs) - set(self.request_queue))
+                list(set(self.shelfs) - set(self.request_queue) - set(carried_shels))
             )
             self.request_queue[self.request_queue.index(shelf)] = new_request
 
@@ -1114,7 +1131,7 @@ class Warehouse(gym.Env):
             self.renderer.close()
 
     def seed(self, seed=None):
-        ...
+        np.random.seed(seed)
     
 
 if __name__ == "__main__":
