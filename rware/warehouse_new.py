@@ -12,6 +12,24 @@ import time
 from typing import List, Tuple, Optional, Dict
 import copy
 import networkx as nx
+
+def find_sections(pairs):
+    groups = []
+
+    for pair in pairs:
+        added = False
+
+        for group in groups:
+            if any(abs(pair[0] - gp[0]) + abs(pair[1] - gp[1]) == 1 for gp in group):
+                group.append(pair)
+                added = True
+                break
+
+        if not added:
+            groups.append([pair])
+
+    return groups
+
 _AXIS_Z = 0
 _AXIS_Y = 1
 _AXIS_X = 2
@@ -326,6 +344,7 @@ class Warehouse(gym.Env):
         self.fast_obs = None
         self.image_obs = None
         self.observation_space_ = None
+        self.rack_groups = find_sections(list([loc for loc in self.item_loc_dict.values() if (loc[1], loc[0]) not in self.goals]))
         if observation_type == ObserationType.IMAGE:
             self._use_image_obs(image_observation_layers, image_observation_directional)
         else:
@@ -366,10 +385,10 @@ class Warehouse(gym.Env):
         #     (self.grid_size[1] // 2 - 1, self.grid_size[0] - 1),
         #     (self.grid_size[1] // 2, self.grid_size[0] - 1),
         # ]
-
+        # Goals under racks
         self.goals = [
-            (i * 2, self.grid_size[0] - 1)
-            for i in range(self.grid_size[1] // 2)
+            (i, self.grid_size[0] - 1)
+            for i in range(self.grid_size[1]) if i % 3
         ]
         self.num_goals = len(self.goals)
 
@@ -462,13 +481,13 @@ class Warehouse(gym.Env):
         agent_id_space = spaces.Box(low=0.0, high=self.n_agents_, shape=(1,), dtype=np.float32)
 
         self._obs_bits_for_self = spaces.flatdim(agent_id_space)  + 3 + spaces.flatdim(location_space)  + spaces.flatdim(location_space)
-        self._obs_bits_per_shelf = 2
+        self._obs_bits_per_shelf = 1
         self._obs_bits_for_requests = 1
 
         if self.global_observations:
-            self._obs_sensor_locations = self.grid_size[0] * self.grid_size[1]
+            self._obs_sensor_locations = len(self.item_loc_dict) - len(self.goals) #self.grid_size[0] * self.grid_size[1]
         else:
-            self._obs_sensor_locations = (1 + 2 * self.sensor_range) ** 2
+            raise RuntimeError
         self._obs_length = (
             self._obs_bits_for_self * self.n_agents_
             + self._obs_sensor_locations * (self._obs_bits_per_shelf
@@ -491,7 +510,6 @@ class Warehouse(gym.Env):
         individual_location_obs = spaces.Dict(OrderedDict(
             {
                 "has_shelf": spaces.MultiBinary(1),
-                "has_carried_shelf": spaces.MultiBinary(1),
                 "shelf_requested": spaces.MultiBinary(1),
             }
         ))
@@ -677,14 +695,16 @@ class Warehouse(gym.Env):
                         obs.write(self.item_loc_dict[self.targets[agent_.id - 1]])
                     else:
                         obs.skip(2)
-            carried_shelfs = [agent.carrying_shelf.id for agent in self.agents if agent.carrying_shelf]
-            for i, id_shelf in enumerate(shelfs):
-                if id_shelf == 0:
-                    obs.skip(2)
-                else:
-                    obs.write(
-                        [1.0, id_shelf in carried_shelfs , int(self.shelfs[id_shelf - 1] in self.request_queue)]
-                    )
+
+            for group in self.rack_groups:
+                for (x, y) in group:
+                    id_shelf = self.grid[_LAYER_SHELFS, x, y]
+                    if id_shelf == 0:
+                        obs.skip(2)
+                    else:
+                        obs.write(
+                            [1.0 , int(self.shelfs[id_shelf - 1] in self.request_queue)]
+                        )
             return obs.vector
  
         # write dictionary observations
@@ -740,16 +760,26 @@ class Warehouse(gym.Env):
     
     def find_path(self, start, goal, agent):
         grid = np.zeros(self.grid_size)
-        if agent.type in [AgentType.AGV, AgentType.AGENT]:
-            grid += self.grid[_LAYER_AGENTS]
-            if agent.carrying_shelf and self.grid[_LAYER_SHELFS, goal[0], goal[1]]:
-                return []
+        # if agent.type in [AgentType.AGV, AgentType.AGENT]:
+        grid += self.grid[_LAYER_AGENTS]
+        grid += self.grid[_LAYER_PICKERS]
+
+        if agent.type == AgentType.PICKER:
+            grid[goal[0], goal[1]] -= self.grid[_LAYER_AGENTS, goal[0], goal[1]]
+        else:
+            grid[goal[0], goal[1]] -= self.grid[_LAYER_PICKERS, goal[0], goal[1]]
+
         if agent.type == AgentType.PICKER:
             # Agents can only travel through highways if carrying a shelf
             for x in range(self.grid_size[1]):
                 for y in range(self.grid_size[0]):
                     grid[y, x] += not self._is_highway(x, y)
-                grid[goal[0], goal[1]] = 0
+            if abs(goal[0] - start[0]) + abs(goal[1] - start[1]) > 1: # Ban "jumps" from on shelf to another
+                grid[goal[0], goal[1]] -= not self._is_highway(goal[1], goal[0])
+            for i in range(self.grid_size[1]):
+                grid[self.grid_size[0] - 1, i] = 1
+
+        grid[start[0], start[1]] = 0
         # Goal location is available even if currently occupied
         grid = [list(map(int, l)) for l in (grid!=0)]
         astar_path = AStar(grid).search(start, goal)
@@ -857,23 +887,6 @@ class Warehouse(gym.Env):
         for agent in agent_list:
             start = agent.x, agent.y
             target = agent.req_location(self.grid_size)
-
-            # if (
-            #     agent.carrying_shelf
-            #     and start != target
-            #     and not (
-            #         self.grid[_LAYER_AGENTS, target[1], target[0]]
-            #         and self.agents[
-            #             self.grid[_LAYER_AGENTS, target[1], target[0]] - 1
-            #         ].carrying_shelf
-            #     )
-            # ):
-            #     # there's a standing shelf at the target location
-            #     # our agent is carrying a shelf so there's no way
-            #     # this movement can succeed. Cancel it.
-            #     agent.req_action = Action.NOOP
-            #     G.add_edge(start, start)
-            # else:
             G.add_edge(start, target)
 
         wcomps = [G.subgraph(c).copy() for c in nx.weakly_connected_components(G)]
@@ -893,6 +906,11 @@ class Warehouse(gym.Env):
                     # print(f"{agent_id}: C {cycle} {action}")
                     if agent_id > 0:
                         commited_agents.add(agent_id)
+                        continue
+                    picker_id = self.grid[_LAYER_PICKERS, start_node[1], start_node[0]]
+                    if picker_id > 0:
+                        commited_agents.add(picker_id)
+                        continue
             except nx.NetworkXNoCycle:
 
                 longest_path = nx.algorithms.dag_longest_path(comp)
@@ -900,25 +918,37 @@ class Warehouse(gym.Env):
                     agent_id = self.grid[_LAYER_AGENTS, y, x]
                     if agent_id:
                         commited_agents.add(agent_id)
+                        continue
+                    picker_id = self.grid[_LAYER_PICKERS, y, x]
+                    if picker_id:
+                        commited_agents.add(picker_id)
         clashes = 0
         for agent in agent_list:
             for other in agent_list:
                 if agent.id != other.id:
                     agent_new_x, agent_new_y = agent.req_location(self.grid_size)
                     other_new_x, other_new_y = other.req_location(self.grid_size)
-                    if agent_new_x == other.x and agent_new_y == other.y:
+                    # If we are in a rack and one of the agents is a picker we ignore clashses, assumed behaviour is Picker is loading
+                    if agent.path != [] and ((agent_new_x, agent_new_y) == (other.x, other.y)):
+                        # Allow Pickers to step over AGVs or AGVs to step over Pickers (if no other AGV at that shelf location)
+                        if not self._is_highway(agent_new_x, agent_new_y) and (agent.type == AgentType.PICKER or other.type == AgentType.PICKER) and agent.type != other.type:
+                            if (agent.type == AgentType.PICKER and self.grid[_LAYER_PICKERS, agent_new_y, agent_new_x] in [0, agent.id]) or (agent.type == AgentType.AGV and self.grid[_LAYER_AGENTS, agent_new_y, agent_new_x] in [0, agent.id]):
+                                commited_agents.add(agent.id)
+                                continue
                         if other.fixing_clash==0:
                             clashes+=1
-                        agent.req_action = Action.NOOP # If the agent's actions leads them in the position of another STOP
-                        if other_new_x in [agent.x, other.x] and other_new_y in [agent.y, other.y]: # If the other agent stays put or wants to go to this location
-                            if not other.req_action in (Action.LEFT, Action.RIGHT): # If the other is not in the middle of a turn
-                                if other.fixing_clash==0:# If the others are not already fixing the clash
-                                    agent.fixing_clash = self.fixing_clash_time # Agent start time for clash fixing
-                                    new_path = self.find_path((agent.y, agent.x), (agent.path[-1][1] ,agent.path[-1][0]), agent)
-                                    if new_path != []: # If the agent can find an alternative path, assign it if not let the other solve the clash
-                                        agent.path = new_path
-                                    else:
-                                        agent.fixing_clash = 0
+                        #if other_new_x in [agent.x, agent_new_x] and other_new_y in [agent.y, agent_new_y]: # If the other agent stays put or wants to go to this location
+                        if agent.fixing_clash == 0:
+                            agent.req_action = Action.NOOP # If the agent's actions leads them in the position of another STOP
+                            if (other_new_x, other_new_y) in [(agent.x, agent.y), (agent_new_x, agent_new_y)]: 
+                                if not other.req_action in (Action.LEFT, Action.RIGHT): # If the other is not in the middle of a turn
+                                    if other.fixing_clash == 0:# If the others are not already fixing the clash
+                                        agent.fixing_clash = self.fixing_clash_time # Agent start time for clash fixing
+                                        new_path = self.find_path((agent.y, agent.x), (agent.path[-1][1] ,agent.path[-1][0]), agent)
+                                        if new_path != []: # If the agent can find an alternative path, assign it if not let the other solve the clash
+                                            agent.path = new_path
+                                        else:
+                                            agent.fixing_clash = 0
 
         commited_agents = set([self.agents[id_ - 1] for id_ in commited_agents])
         failed_agents = set(agent_list) - commited_agents
@@ -965,7 +995,7 @@ class Warehouse(gym.Env):
         # This can happen when their goal is occupied after reaching their last step/re-calculating a path
         stucks_count = 0
         for agent in self.agents:
-            if agent.type != AgentType.PICKER and agent.busy:
+            if agent.busy and not agent.fixing_clash:
                 if agent.req_action not in (Action.LEFT, Action.RIGHT): # Don't count loading or changing directions
                     if agent.req_action!=Action.TOGGLE_LOAD or (agent.x, agent.y) in self.goals:
                         pos = self.stuck_count[agent.id - 1][1]
@@ -983,8 +1013,7 @@ class Warehouse(gym.Env):
                                 continue
                             agent.busy = False
         #  agents that can_carry should not collide
-        carry_agents = [agent for agent in self.agents if agent.type != AgentType.PICKER]
-        clashes_count = self.resolve_move_conflict(carry_agents)
+        clashes_count = self.resolve_move_conflict(self.agents)
         
         rewards = np.zeros(self.n_agents_)
         # Add step penalty
