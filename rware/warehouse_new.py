@@ -482,7 +482,7 @@ class Warehouse(gym.Env):
 
         self._obs_bits_for_agvs = spaces.flatdim(agent_id_space) + 3  + spaces.flatdim(location_space)  + spaces.flatdim(location_space)
         self._obs_bits_for_pickers = spaces.flatdim(agent_id_space) + spaces.flatdim(location_space)  + spaces.flatdim(location_space)
-        self._obs_bits_per_shelf = 2
+        self._obs_bits_per_shelf = 1 #+ 1
         self._obs_bits_for_requests = 1
 
         if self.global_observations:
@@ -520,8 +520,8 @@ class Warehouse(gym.Env):
         individual_location_obs = spaces.Dict(OrderedDict(
             {
                 "has_shelf": spaces.MultiBinary(1),
-                "has_carried_shelf": spaces.MultiBinary(1),
                 "shelf_requested": spaces.MultiBinary(1),
+                # "has_carried_shelf": spaces.MultiBinary(1),
             }
         ))
         obs["sensors"] = spaces.Tuple(self._obs_sensor_locations * (individual_location_obs,))
@@ -712,16 +712,20 @@ class Warehouse(gym.Env):
                     else:
                         obs.skip(2)
             # Shelves observation
-            carried_shelfs = [agent.carrying_shelf.id for agent in self.agents if agent.carrying_shelf]
             for group in self.rack_groups:
                 for (x, y) in group:
                     id_shelf = self.grid[_LAYER_SHELFS, x, y]
                     if id_shelf == 0:
-                        obs.skip(3)
+                        obs.skip(2)
                     else:
                         obs.write(
-                            [1.0 , int(self.shelfs[id_shelf - 1] in self.request_queue), id_shelf in carried_shelfs]
+                            [1.0 , int(self.shelfs[id_shelf - 1] in self.request_queue)]
                         )
+                    # id_carried_shelf = self.grid[_LAYER_CARRIED_SHELFS, x, y]
+                    # if id_carried_shelf == 0:
+                    #     obs.skip(1)
+                    # else:
+                    #     obs.write([1.0])
             return obs.vector
  
         # write dictionary observations
