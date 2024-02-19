@@ -480,8 +480,9 @@ class Warehouse(gym.Env):
         location_space = spaces.Box(low=0.0, high=max(self.grid_size), shape=(2,), dtype=np.float32)
         agent_id_space = spaces.Box(low=0.0, high=self.n_agents_, shape=(1,), dtype=np.float32)
 
-        self._obs_bits_for_self = spaces.flatdim(agent_id_space)  + 3 + spaces.flatdim(location_space)  + spaces.flatdim(location_space)
-        self._obs_bits_per_shelf = 1
+        self._obs_bits_for_agvs = spaces.flatdim(agent_id_space) + 3  + spaces.flatdim(location_space)  + spaces.flatdim(location_space)
+        self._obs_bits_for_pickers = spaces.flatdim(agent_id_space) + spaces.flatdim(location_space)  + spaces.flatdim(location_space)
+        self._obs_bits_per_shelf = 2
         self._obs_bits_for_requests = 1
 
         if self.global_observations:
@@ -489,19 +490,28 @@ class Warehouse(gym.Env):
         else:
             raise RuntimeError
         self._obs_length = (
-            self._obs_bits_for_self * self.n_agents_
+            self._obs_bits_for_agvs * self.n_agvs
+            + self._obs_bits_for_pickers * self.n_pickers
             + self._obs_sensor_locations * (self._obs_bits_per_shelf
             + self._obs_bits_for_requests)
         )
 
         obs = {}
-        for agent_id in range(self.n_agents_):
+        for agent_id in range(self.n_agvs):
             obs[f"agent{agent_id+1}"] = spaces.Dict(OrderedDict(
                 {
                     "agent_id": agent_id_space,
-                    "busy_state": spaces.MultiBinary(1),
                     "carrying_shelf": spaces.MultiBinary(1),
                     "shelf_requested": spaces.MultiBinary(1),
+                    "loading_state": spaces.MultiBinary(1),
+                    "location": location_space,
+                    "target_location": location_space,
+                }
+            ))
+        for agent_id in range(self.n_pickers):
+            obs[f"agent{self.n_agvs + agent_id+1}"] = spaces.Dict(OrderedDict(
+                {
+                    "agent_id": agent_id_space,
                     "location": location_space,
                     "target_location": location_space,
                 }
@@ -510,6 +520,7 @@ class Warehouse(gym.Env):
         individual_location_obs = spaces.Dict(OrderedDict(
             {
                 "has_shelf": spaces.MultiBinary(1),
+                "has_carried_shelf": spaces.MultiBinary(1),
                 "shelf_requested": spaces.MultiBinary(1),
             }
         ))
@@ -671,39 +682,45 @@ class Warehouse(gym.Env):
             else:
                 agent_x = agent.x
                 agent_y = agent.y
-            obs.write([agent.id, agent.busy])
-            if agent.carrying_shelf:
-                obs.write([1, int(agent.carrying_shelf in self.request_queue)])
-            else:
-                obs.skip(2)
-            obs.write([agent_x, agent_y])
+            # Agent self observation
+            obs.write([agent.id])
+            if agent.type == AgentType.AGV:
+                if agent.carrying_shelf:
+                    obs.write([1, int(agent.carrying_shelf in self.request_queue)])
+                else:
+                    obs.skip(2)
+                obs.write([agent.req_action == Action.TOGGLE_LOAD])
+            obs.write([agent.y, agent.x])
             if self.targets[agent.id - 1] != 0:
                 obs.write(self.item_loc_dict[self.targets[agent.id - 1]])
             else:
                 obs.skip(2)
-
+            # Others observation
             for i in range(self.n_agents_):
-                if i != agent.id - 1:
-                    agent_ = self.agents[i]
-                    obs.write([agent_.id, agent_.busy])
-                    if agent_.carrying_shelf:
-                        obs.write([1, int(agent_.carrying_shelf in self.request_queue)])
-                    else:
-                        obs.skip(2)
-                    obs.write([agent_.x, agent_.y])
+                agent_ = self.agents[i]
+                if agent_.id != agent.id:
+                    obs.write([agent_.id])
+                    if agent_.type == AgentType.AGV:
+                        if agent_.carrying_shelf:
+                            obs.write([1, int(agent_.carrying_shelf in self.request_queue)])
+                        else:
+                            obs.skip(2)
+                        obs.write([agent_.req_action == Action.TOGGLE_LOAD])
+                    obs.write([agent_.y, agent_.x])
                     if self.targets[agent_.id - 1] != 0:
                         obs.write(self.item_loc_dict[self.targets[agent_.id - 1]])
                     else:
                         obs.skip(2)
-
+            # Shelves observation
+            carried_shelfs = [agent.carrying_shelf.id for agent in self.agents if agent.carrying_shelf]
             for group in self.rack_groups:
                 for (x, y) in group:
                     id_shelf = self.grid[_LAYER_SHELFS, x, y]
                     if id_shelf == 0:
-                        obs.skip(2)
+                        obs.skip(3)
                     else:
                         obs.write(
-                            [1.0 , int(self.shelfs[id_shelf - 1] in self.request_queue)]
+                            [1.0 , int(self.shelfs[id_shelf - 1] in self.request_queue), id_shelf in carried_shelfs]
                         )
             return obs.vector
  
@@ -823,8 +840,7 @@ class Warehouse(gym.Env):
         dispatch_item_map = np.zeros(len(self.item_loc_dict) - len(self.goals))
         for id_, coords in self.item_loc_dict.items():
             if (coords[1], coords[0]) not in self.goals:
-                if self.grid[_LAYER_CARRIED_SHELFS, coords[0], coords[1]]!=0 and self.grid[_LAYER_AGENTS, coords[0], coords[1]]!=0:
-                    if self.agents[self.grid[_LAYER_AGENTS, coords[0], coords[1]] - 1].req_action == Action.TOGGLE_LOAD:
+                if self.grid[_LAYER_AGENTS, coords[0], coords[1]]!=0 and self.agents[self.grid[_LAYER_AGENTS, coords[0], coords[1]] - 1].req_action == Action.TOGGLE_LOAD:
                         dispatch_item_map[id_ - len(self.goals) - 1] = 1
         return dispatch_item_map
     
@@ -928,27 +944,25 @@ class Warehouse(gym.Env):
                 if agent.id != other.id:
                     agent_new_x, agent_new_y = agent.req_location(self.grid_size)
                     other_new_x, other_new_y = other.req_location(self.grid_size)
-                    # If we are in a rack and one of the agents is a picker we ignore clashses, assumed behaviour is Picker is loading
                     if agent.path != [] and ((agent_new_x, agent_new_y) == (other.x, other.y)):
-                        # Allow Pickers to step over AGVs or AGVs to step over Pickers (if no other AGV at that shelf location)
+                        # If we are in a rack and one of the agents is a picker we ignore clashses, assumed behaviour is Picker is loading
                         if not self._is_highway(agent_new_x, agent_new_y) and (agent.type == AgentType.PICKER or other.type == AgentType.PICKER) and agent.type != other.type:
+                            # Allow Pickers to step over AGVs (if no other Picker at that shelf location) or AGVs to step over Pickers (if no other AGV at that shelf location)
                             if (agent.type == AgentType.PICKER and self.grid[_LAYER_PICKERS, agent_new_y, agent_new_x] in [0, agent.id]) or (agent.type == AgentType.AGV and self.grid[_LAYER_AGENTS, agent_new_y, agent_new_x] in [0, agent.id]):
                                 commited_agents.add(agent.id)
                                 continue
+                        agent.req_action = Action.NOOP # If the agent's actions leads them in the position of another STOP
                         if other.fixing_clash==0:
                             clashes+=1
-                        #if other_new_x in [agent.x, agent_new_x] and other_new_y in [agent.y, agent_new_y]: # If the other agent stays put or wants to go to this location
-                        if agent.fixing_clash == 0:
-                            agent.req_action = Action.NOOP # If the agent's actions leads them in the position of another STOP
-                            if (other_new_x, other_new_y) in [(agent.x, agent.y), (agent_new_x, agent_new_y)]: 
-                                if not other.req_action in (Action.LEFT, Action.RIGHT): # If the other is not in the middle of a turn
-                                    if other.fixing_clash == 0:# If the others are not already fixing the clash
-                                        agent.fixing_clash = self.fixing_clash_time # Agent start time for clash fixing
-                                        new_path = self.find_path((agent.y, agent.x), (agent.path[-1][1] ,agent.path[-1][0]), agent)
-                                        if new_path != []: # If the agent can find an alternative path, assign it if not let the other solve the clash
-                                            agent.path = new_path
-                                        else:
-                                            agent.fixing_clash = 0
+                        if (other_new_x, other_new_y) in [(agent.x, agent.y), (agent_new_x, agent_new_y)]: 
+                            if not other.req_action in (Action.LEFT, Action.RIGHT): # If the other is not in the middle of a turn
+                                if other.fixing_clash == 0:# If the others are not already fixing the clash
+                                    agent.fixing_clash = self.fixing_clash_time # Agent start time for clash fixing
+                                    new_path = self.find_path((agent.y, agent.x), (agent.path[-1][1] ,agent.path[-1][0]), agent)
+                                    if new_path != []: # If the agent can find an alternative path, assign it if not let the other solve the clash
+                                        agent.path = new_path
+                                    else:
+                                        agent.fixing_clash = 0
 
         commited_agents = set([self.agents[id_ - 1] for id_ in commited_agents])
         failed_agents = set(agent_list) - commited_agents
@@ -995,9 +1009,9 @@ class Warehouse(gym.Env):
         # This can happen when their goal is occupied after reaching their last step/re-calculating a path
         stucks_count = 0
         for agent in self.agents:
-            if agent.busy and not agent.fixing_clash:
-                if agent.req_action not in (Action.LEFT, Action.RIGHT): # Don't count loading or changing directions
-                    if agent.req_action!=Action.TOGGLE_LOAD or (agent.x, agent.y) in self.goals:
+            if agent.busy and agent.fixing_clash == 0: # Don't count path calculation/fixing steps
+                if agent.req_action not in (Action.LEFT, Action.RIGHT): # Don't count changing directions
+                    if agent.req_action!=Action.TOGGLE_LOAD or (agent.x, agent.y) in self.goals: # Don't count loading or changing directions
                         pos = self.stuck_count[agent.id - 1][1]
                         if agent.x == pos[0] and agent.y == pos[1]:
                             self.stuck_count[agent.id - 1][0] += 1
@@ -1017,7 +1031,7 @@ class Warehouse(gym.Env):
         
         rewards = np.zeros(self.n_agents_)
         # Add step penalty
-        rewards -= 0.01
+        rewards -= 0.001
         for agent in self.agents:
             agent.prev_x, agent.prev_y = agent.x, agent.y
             if agent.req_action == Action.FORWARD:
@@ -1041,8 +1055,7 @@ class Warehouse(gym.Env):
                             if self.reward_type == RewardType.GLOBAL:
                                 rewards += 0.5
                             elif self.reward_type == RewardType.INDIVIDUAL:
-                                rewards[picker_id - 1] += 0.25
-                                # rewards[agent.id - 1] += 0.25
+                                rewards[picker_id - 1] += 0.1
                     elif agent.type == AgentType.AGENT:
                         agent.carrying_shelf = self.shelfs[shelf_id - 1]
                         agent.busy = False
@@ -1068,7 +1081,7 @@ class Warehouse(gym.Env):
                         if self.reward_type == RewardType.GLOBAL:
                             rewards += 0.5
                         elif self.reward_type == RewardType.INDIVIDUAL:
-                            rewards[picker_id - 1] += 0.25
+                            rewards[picker_id - 1] += 0.1
                     if agent.has_delivered and self.reward_type == RewardType.TWO_STAGE:
                         # rewards[agent.id - 1] += 0.5
                         raise NotImplementedError('TWO_STAGE reward not implemenred for diverse rware')
