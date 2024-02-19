@@ -958,7 +958,7 @@ class Warehouse(gym.Env):
                         agent.req_action = Action.NOOP # If the agent's actions leads them in the position of another STOP
                         if other.fixing_clash==0:
                             clashes+=1
-                        if (other_new_x, other_new_y) in [(agent.x, agent.y), (agent_new_x, agent_new_y)]: 
+                        if (other_new_x, other_new_y) in [(agent.x, agent.y)]: 
                             if not other.req_action in (Action.LEFT, Action.RIGHT): # If the other is not in the middle of a turn
                                 if other.fixing_clash == 0:# If the others are not already fixing the clash
                                     agent.fixing_clash = self.fixing_clash_time # Agent start time for clash fixing
