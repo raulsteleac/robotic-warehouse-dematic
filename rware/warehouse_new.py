@@ -952,13 +952,14 @@ class Warehouse(gym.Env):
                         # If we are in a rack and one of the agents is a picker we ignore clashses, assumed behaviour is Picker is loading
                         if not self._is_highway(agent_new_x, agent_new_y) and (agent.type == AgentType.PICKER or other.type == AgentType.PICKER) and agent.type != other.type:
                             # Allow Pickers to step over AGVs (if no other Picker at that shelf location) or AGVs to step over Pickers (if no other AGV at that shelf location)
-                            if (agent.type == AgentType.PICKER and self.grid[_LAYER_PICKERS, agent_new_y, agent_new_x] in [0, agent.id]) or (agent.type == AgentType.AGV and self.grid[_LAYER_AGENTS, agent_new_y, agent_new_x] in [0, agent.id]):
+                            if ((agent.type == AgentType.PICKER and self.grid[_LAYER_PICKERS, agent_new_y, agent_new_x] in [0, agent.id]) 
+                                or (agent.type == AgentType.AGV and self.grid[_LAYER_AGENTS, agent_new_y, agent_new_x] in [0, agent.id])):
                                 commited_agents.add(agent.id)
                                 continue
                         agent.req_action = Action.NOOP # If the agent's actions leads them in the position of another STOP
                         if other.fixing_clash==0:
                             clashes+=1
-                        if (other_new_x, other_new_y) in [(agent.x, agent.y)]: 
+                        if (other_new_x, other_new_y) in [(agent.x, agent.y), (agent_new_x, agent_new_y)]: 
                             if not other.req_action in (Action.LEFT, Action.RIGHT): # If the other is not in the middle of a turn
                                 if other.fixing_clash == 0:# If the others are not already fixing the clash
                                     agent.fixing_clash = self.fixing_clash_time # Agent start time for clash fixing
@@ -1006,9 +1007,14 @@ class Warehouse(gym.Env):
                 else:
                     agent.req_action = get_next_micro_action(agent.x, agent.y, agent.dir, agent.path[0])
                     # If agent is at the end of a path and carrying a shelf and the target location is already occupied restart agent
-                    if len(agent.path) == 1 and agent.carrying_shelf and self.grid[_LAYER_SHELFS, agent.path[-1][1], agent.path[-1][0]]:
-                        agent.req_action = Action.NOOP
-                        agent.busy = False
+                    if len(agent.path) == 1:
+                        if agent.carrying_shelf and self.grid[_LAYER_SHELFS, agent.path[-1][1], agent.path[-1][0]]:
+                            agent.req_action = Action.NOOP
+                            agent.busy = False
+                        if agent.type == AgentType.PICKER and self.grid[_LAYER_AGENTS, agent.path[-1][1], agent.path[-1][0]] == 0:
+                            agent.req_action = Action.NOOP
+                            agent.busy = False
+
         # Restart agents if they are stuck at the same position
         # This can happen when their goal is occupied after reaching their last step/re-calculating a path
         stucks_count = 0
