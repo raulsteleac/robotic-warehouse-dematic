@@ -339,7 +339,7 @@ class Warehouse(gym.Env):
         
         self.targets = np.zeros(len(self.item_loc_dict), dtype=int)
         self.stuck_count = []
-        self._stuck_threshold = 10
+        self._stuck_threshold = 5
         # default values:
         self.fast_obs = None
         self.image_obs = None
@@ -948,7 +948,8 @@ class Warehouse(gym.Env):
                 if agent.id != other.id:
                     agent_new_x, agent_new_y = agent.req_location(self.grid_size)
                     other_new_x, other_new_y = other.req_location(self.grid_size)
-                    if agent.path != [] and ((agent_new_x, agent_new_y) == (other.x, other.y)):
+                    # Clash fixing logic
+                    if agent.path and ((agent_new_x, agent_new_y) in [(other.x, other.y), (other_new_x, other_new_y)]): 
                         # If we are in a rack and one of the agents is a picker we ignore clashses, assumed behaviour is Picker is loading
                         if not self._is_highway(agent_new_x, agent_new_y) and (agent.type == AgentType.PICKER or other.type == AgentType.PICKER) and agent.type != other.type:
                             # Allow Pickers to step over AGVs (if no other Picker at that shelf location) or AGVs to step over Pickers (if no other AGV at that shelf location)
@@ -956,18 +957,24 @@ class Warehouse(gym.Env):
                                 or (agent.type == AgentType.AGV and self.grid[_LAYER_AGENTS, agent_new_y, agent_new_x] in [0, agent.id])):
                                 commited_agents.add(agent.id)
                                 continue
-                        agent.req_action = Action.NOOP # If the agent's actions leads them in the position of another STOP
-                        if other.fixing_clash==0:
-                            clashes+=1
-                        if (other_new_x, other_new_y) in [(agent.x, agent.y), (agent_new_x, agent_new_y)]: 
-                            if not other.req_action in (Action.LEFT, Action.RIGHT): # If the other is not in the middle of a turn
+                        # If the agent's next action bumps it into another agent
+                        if (agent_new_x, agent_new_y) == (other.x, other.y):
+                            agent.req_action = Action.NOOP # Stop the action
+                            # Check if the clash is not solved naturaly by the other agent moving away
+                            if (other_new_x, other_new_y) in [(agent.x, agent.y), (agent_new_x, agent_new_y)] and not other.req_action in (Action.LEFT, Action.RIGHT):
                                 if other.fixing_clash == 0:# If the others are not already fixing the clash
+                                    clashes+=1
                                     agent.fixing_clash = self.fixing_clash_time # Agent start time for clash fixing
                                     new_path = self.find_path((agent.y, agent.x), (agent.path[-1][1] ,agent.path[-1][0]), agent)
                                     if new_path != []: # If the agent can find an alternative path, assign it if not let the other solve the clash
                                         agent.path = new_path
                                     else:
                                         agent.fixing_clash = 0
+                        elif (agent_new_x, agent_new_y) == (other_new_x, other_new_y) and (agent_new_x, agent_new_y) != (agent.x, agent.y): 
+                            # If the agent's next action bumps it into another agent position after they take actions simultaneously
+                            if agent.fixing_clash == 0 and other.fixing_clash == 0:
+                                agent.req_action = Action.NOOP # If the agent's actions leads them in the position of another STOP
+                                agent.fixing_clash = self.fixing_clash_time # Agent wait one step while the other moves into place
 
         commited_agents = set([self.agents[id_ - 1] for id_ in commited_agents])
         failed_agents = set(agent_list) - commited_agents
@@ -1015,11 +1022,16 @@ class Warehouse(gym.Env):
                             agent.req_action = Action.NOOP
                             agent.busy = False
 
+        #  agents that can_carry should not collide
+        clashes_count = self.resolve_move_conflict(self.agents)
+
         # Restart agents if they are stuck at the same position
         # This can happen when their goal is occupied after reaching their last step/re-calculating a path
         stucks_count = 0
+        agvs_distance_travelled = 0
+        pickers_distance_travelled = 0
         for agent in self.agents:
-            if agent.busy and agent.fixing_clash == 0: # Don't count path calculation/fixing steps
+            if agent.busy: # Don't count path calculation/fixing steps
                 if agent.req_action not in (Action.LEFT, Action.RIGHT): # Don't count changing directions
                     if agent.req_action!=Action.TOGGLE_LOAD or (agent.x, agent.y) in self.goals: # Don't count loading or changing directions
                         pos = self.stuck_count[agent.id - 1][1]
@@ -1027,18 +1039,23 @@ class Warehouse(gym.Env):
                             self.stuck_count[agent.id - 1][0] += 1
                         else:
                             self.stuck_count[agent.id - 1] = [0, (agent.x, agent.y)]
-                        if self.stuck_count[agent.id - 1][0] > self._stuck_threshold:
-                            stucks_count += 1
+                            if agent.type == AgentType.PICKER:
+                                pickers_distance_travelled += 1
+                            else:
+                                agvs_distance_travelled += 1
+                        if self.stuck_count[agent.id - 1][0] > self._stuck_threshold and self.stuck_count[agent.id - 1][0] < self._stuck_threshold + self.column_height + 2: # Time to get out of aisle 
                             agent.req_action = Action.NOOP
-                            self.stuck_count[agent.id - 1] = [0, (agent.x, agent.y)]
                             new_path = self.find_path((agent.y, agent.x), (agent.path[-1][1] ,agent.path[-1][0]), agent)
                             if new_path:
                                 agent.path = new_path
+                                self.stuck_count[agent.id - 1] = [0, (agent.x, agent.y)]
                                 continue
+                        if self.stuck_count[agent.id - 1][0] > self._stuck_threshold + self.column_height + 2: # Time to get out of aisle 
+                            stucks_count += 1
+                            self.stuck_count[agent.id - 1] = [0, (agent.x, agent.y)]
+                            agent.req_action = Action.NOOP
                             agent.busy = False
-        #  agents that can_carry should not collide
-        clashes_count = self.resolve_move_conflict(self.agents)
-        
+
         rewards = np.zeros(self.n_agents_)
         # Add step penalty
         rewards -= 0.001
@@ -1154,12 +1171,19 @@ class Warehouse(gym.Env):
         else:
             dones = self.n_agents_ * [False]
 
+        
+        agvs_idle_time = sum([int(agent.req_action in (Action.NOOP, Action.TOGGLE_LOAD)) for agent in self.agents[:self.n_agvs]])
+        pickers_idle_time = sum([int(agent.req_action in (Action.NOOP, Action.TOGGLE_LOAD)) for agent in self.agents[self.n_agvs:]])
         new_obs = tuple([self._make_obs(agent) for agent in self.agents])
         info = {}
         info["vehicles_busy"] = [agent.busy for agent in self.agents]
         info["shelf_deliveries"] = shelf_deliveries
         info["clashes"] = clashes_count
         info["stucks"] = stucks_count
+        info["agvs_distance_travelled"] = agvs_distance_travelled
+        info["pickers_distance_travelled"] = pickers_distance_travelled
+        info["agvs_idle_time"] = agvs_idle_time
+        info["pickers_idle_time"] = pickers_idle_time
         return new_obs, list(rewards), dones, info
 
     def render(self, mode="human"):
