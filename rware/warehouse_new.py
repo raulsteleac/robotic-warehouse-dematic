@@ -373,35 +373,47 @@ class Warehouse(gym.Env):
 
     def _make_layout_from_params(self, shelf_columns, shelf_rows, column_height):
         assert shelf_columns % 2 == 1, "Only odd number of shelf columns is supported"
-
-        self.extra_rows = 1
+        self.extra_rows = 2
+        self._extra_rows_columns = 1
         self.grid_size = (
             (column_height + 1) * shelf_rows + 2 + self.extra_rows,
             (2 + 1) * shelf_columns + 1,
         )
+        
+        self.grid_size = (
+            1 + (column_height + 1 + self._extra_rows_columns) * shelf_rows + 1 + self._extra_rows_columns + self.extra_rows,
+            (2 + 1 + self._extra_rows_columns) * shelf_columns + 1  + self._extra_rows_columns,
+        )
         self.column_height = column_height
         self.grid = np.zeros((_COLLISION_LAYERS, *self.grid_size), dtype=np.int32)
-        # self.goals = [
-        #     (self.grid_size[1] // 2 - 1, self.grid_size[0] - 1),
-        #     (self.grid_size[1] // 2, self.grid_size[0] - 1),
-        # ]
         # Goals under racks
+        accepted_x = []
+        for i in range(0, self.grid_size[1],  3 + self._extra_rows_columns):
+            accepted_x.append(i)
+            for j in range(self._extra_rows_columns):
+                accepted_x.append(i+j+1)
+
+        accepted_y = []
+        for i in range(0, self.grid_size[0],  1 + self._extra_rows_columns + column_height):
+            accepted_y.append(i)
+            for j in range(self._extra_rows_columns):
+                accepted_y.append(i+j+1)
+
         self.goals = [
             (i, self.grid_size[0] - 1)
-            for i in range(self.grid_size[1]) if i % 3
+            for i in range(self.grid_size[1]) if not i in accepted_x
         ]
         self.num_goals = len(self.goals)
 
         self.highways = np.zeros(self.grid_size, dtype=np.int32)
 
         highway_func = lambda x, y: (
-            (x % 3 == 0)  # vertical highways
-            or (y % (self.column_height + 1) == 0)  # horizontal highways
+            ((x < 1 + self._extra_rows_columns or x >= self.grid_size[1] - 1 - self._extra_rows_columns) 
+             or (y < 1 + self._extra_rows_columns or y >= self.grid_size[0] - 1 - self._extra_rows_columns))
+            or x in accepted_x  # vertical highways
+            or y in accepted_y  # vertical highways
             or (y >= self.grid_size[0] - 1 - self.extra_rows)  # delivery row
-            or (  # remove a box for queuing
-                (y > self.grid_size[0] - (self.column_height + 3 + self.extra_rows))
-                and ((x == self.grid_size[1] // 2 - 1) or (x == self.grid_size[1] // 2))
-            )
+            or y in [self.goals[0][1] - i - 1 for i in range(self._extra_rows_columns)]
         )
         item_loc_index = 1
         self.item_loc_dict = {}
@@ -784,30 +796,44 @@ class Warehouse(gym.Env):
         # if agent.type in [AgentType.AGV, AgentType.AGENT]:
         grid += self.grid[_LAYER_AGENTS]
         grid += self.grid[_LAYER_PICKERS]
-
         if agent.type == AgentType.PICKER:
             grid[goal[0], goal[1]] -= self.grid[_LAYER_AGENTS, goal[0], goal[1]]
         else:
             grid[goal[0], goal[1]] -= self.grid[_LAYER_PICKERS, goal[0], goal[1]]
 
+        special_case_jump = False
         if agent.type == AgentType.PICKER:
             # Agents can only travel through highways if carrying a shelf
             for x in range(self.grid_size[1]):
                 for y in range(self.grid_size[0]):
                     grid[y, x] += not self._is_highway(x, y)
-            if abs(goal[0] - start[0]) + abs(goal[1] - start[1]) > 1: # Ban "jumps" from on shelf to another
-                grid[goal[0], goal[1]] -= not self._is_highway(goal[1], goal[0])
+            grid[goal[0], goal[1]] -= not self._is_highway(goal[1], goal[0])
+            if   agent.type == AgentType.PICKER and  ((not self._is_highway(start[1], start[0])) and goal[0] == start[0] and abs(goal[1] - start[1]) == 1): # Ban "jumps" from on shelf to another
+                special_case_jump = True
             for i in range(self.grid_size[1]):
                 grid[self.grid_size[0] - 1, i] = 1
 
         grid[start[0], start[1]] = 0
-        # Goal location is available even if currently occupied
-        grid = [list(map(int, l)) for l in (grid!=0)]
-        astar_path = AStar(grid).search(start, goal)
+        if not special_case_jump:
+            grid = [list(map(int, l)) for l in (grid!=0)]
+            astar_path = AStar(grid).search(start, goal)
+            if astar_path:
+                astar_path = astar_path[1:]
+        else:
+            special_start = None
+            if self._is_highway(start[1] - 1, start[0]):
+                special_start = (start[0], start[1] - 1)
+            if self._is_highway(start[1] + 1, start[0]):
+                special_start = (start[0], start[1] + 1)
+            grid[start[0], start[1]] = 1
+            grid[special_start[0], special_start[1]] = 0
+            grid = [list(map(int, l)) for l in (grid!=0)]
+            astar_path = AStar(grid).search(special_start, goal)
         if astar_path:
-            return [(x, y) for y, x in astar_path[1:]]
+            return [(x, y) for y, x in astar_path]
         else:
             return []
+            
 
     def _recalc_grid(self):
         self.grid[:] = 0
@@ -832,11 +858,11 @@ class Warehouse(gym.Env):
                     request_item_map[id_ - len(self.goals) - 1] = int((coords[0], coords[1]) in requested_shelf_coords)
         return request_item_map
     
-    def get_empty_shelf_informatlocationsion(self):
+    def get_empty_shelf_information(self):
         empty_item_map = np.zeros(len(self.item_loc_dict) - len(self.goals))
         for id_, coords in self.item_loc_dict.items():
             if (coords[1], coords[0]) not in self.goals:
-                if self.grid[_LAYER_SHELFS, coords[0], coords[1]] == 0:
+                if self.grid[_LAYER_SHELFS, coords[0], coords[1]] == 0 and (self.grid[_LAYER_CARRIED_SHELFS, coords[0], coords[1]] == 0 or self.agents[self.grid[_LAYER_AGENTS, coords[0], coords[1]] - 1].req_action not in [Action.NOOP, Action.TOGGLE_LOAD]):
                     empty_item_map[id_ - len(self.goals) - 1] = 1
         return empty_item_map
     
@@ -1014,13 +1040,13 @@ class Warehouse(gym.Env):
                 else:
                     agent.req_action = get_next_micro_action(agent.x, agent.y, agent.dir, agent.path[0])
                     # If agent is at the end of a path and carrying a shelf and the target location is already occupied restart agent
-                    if len(agent.path) == 1:
-                        if agent.carrying_shelf and self.grid[_LAYER_SHELFS, agent.path[-1][1], agent.path[-1][0]]:
-                            agent.req_action = Action.NOOP
-                            agent.busy = False
-                        if agent.type == AgentType.PICKER and self.grid[_LAYER_AGENTS, agent.path[-1][1], agent.path[-1][0]] == 0:
-                            agent.req_action = Action.NOOP
-                            agent.busy = False
+            if agent.path and len(agent.path) == 1:
+                if agent.carrying_shelf and self.grid[_LAYER_SHELFS, agent.path[-1][1], agent.path[-1][0]]:
+                    agent.req_action = Action.NOOP
+                    agent.busy = False
+                if agent.type == AgentType.PICKER and self.grid[_LAYER_AGENTS, agent.path[-1][1], agent.path[-1][0]] == 0:
+                    agent.req_action = Action.NOOP
+                    agent.busy = False
 
         #  agents that can_carry should not collide
         clashes_count = self.resolve_move_conflict(self.agents)
@@ -1091,6 +1117,9 @@ class Warehouse(gym.Env):
             elif agent.req_action == Action.TOGGLE_LOAD and agent.carrying_shelf:
                 picker_id = self.grid[_LAYER_PICKERS, agent.y, agent.x]
                 if (agent.x, agent.y) in self.goals:
+                    agent.busy = False
+                    continue
+                if self.grid[_LAYER_SHELFS, agent.y, agent.x] != 0:
                     agent.busy = False
                     continue
                 if not self._is_highway(agent.x, agent.y):
