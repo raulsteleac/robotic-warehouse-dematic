@@ -1071,11 +1071,17 @@ class Warehouse(gym.Env):
                                 agvs_distance_travelled += 1
                         if self.stuck_count[agent.id - 1][0] > self._stuck_threshold and self.stuck_count[agent.id - 1][0] < self._stuck_threshold + self.column_height + 2: # Time to get out of aisle 
                             agent.req_action = Action.NOOP
-                            new_path = self.find_path((agent.y, agent.x), (agent.path[-1][1] ,agent.path[-1][0]), agent)
-                            if new_path:
-                                agent.path = new_path
+                            if agent.path:
+                                new_path = self.find_path((agent.y, agent.x), (agent.path[-1][1] ,agent.path[-1][0]), agent)
+                                if new_path:
+                                    agent.path = new_path
+                                    self.stuck_count[agent.id - 1] = [0, (agent.x, agent.y)]
+                                    continue
+                            else:
+                                stucks_count += 1
+                                agent.busy = False
                                 self.stuck_count[agent.id - 1] = [0, (agent.x, agent.y)]
-                                continue
+
                         if self.stuck_count[agent.id - 1][0] > self._stuck_threshold + self.column_height + 2: # Time to get out of aisle 
                             stucks_count += 1
                             self.stuck_count[agent.id - 1] = [0, (agent.x, agent.y)]
