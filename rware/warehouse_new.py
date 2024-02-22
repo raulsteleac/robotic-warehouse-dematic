@@ -3,8 +3,8 @@ import logging
 from collections import defaultdict, OrderedDict
 import gym
 from gym import spaces
-from astar.search import AStar
-
+from rware.astar import AStar
+# from astar.search import AStar
 from rware.utils import MultiAgentActionSpace, MultiAgentObservationSpace
 from enum import Enum
 import numpy as np
@@ -12,6 +12,7 @@ import time
 from typing import List, Tuple, Optional, Dict
 import copy
 import networkx as nx
+import random
 
 def find_sections(pairs):
     groups = []
@@ -1166,9 +1167,9 @@ class Warehouse(gym.Env):
             shelf_deliveries += 1
             # remove from queue and replace it
             carried_shels = [agent.carrying_shelf for agent in self.agents if agent.carrying_shelf]
-            new_request = np.random.choice(
-                list(set(self.shelfs) - set(self.request_queue) - set(carried_shels))
-            )
+            new_shelf_candidates = list(set(self.shelfs) - set(self.request_queue) - set(carried_shels)) # sort so np.random with seed is repeatable
+            new_shelf_candidates.sort(key = lambda x: x.id)
+            new_request = np.random.choice(new_shelf_candidates)
             self.request_queue[self.request_queue.index(shelf)] = new_request
 
             if self.no_need_return_item:
@@ -1237,6 +1238,7 @@ class Warehouse(gym.Env):
 
     def seed(self, seed=None):
         np.random.seed(seed)
+        random.seed(seed)
     
 
 if __name__ == "__main__":
