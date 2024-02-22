@@ -849,6 +849,9 @@ class Warehouse(gym.Env):
             if agent.carrying_shelf:
                 self.grid[_LAYER_CARRIED_SHELFS, agent.y, agent.x] = agent.carrying_shelf.id
     
+    def get_carrying_shelf_information(self):
+        return [agent.carrying_shelf != None for agent in self.agents[:self.n_agvs]]
+
     def get_shelf_request_information(self):
         request_item_map = np.zeros(len(self.item_loc_dict) - len(self.goals))
         requested_shelf_coords = [(shelf.y, shelf.x) for shelf in self.request_queue]
@@ -1040,13 +1043,13 @@ class Warehouse(gym.Env):
                 else:
                     agent.req_action = get_next_micro_action(agent.x, agent.y, agent.dir, agent.path[0])
                     # If agent is at the end of a path and carrying a shelf and the target location is already occupied restart agent
-            if agent.path and len(agent.path) == 1:
-                if agent.carrying_shelf and self.grid[_LAYER_SHELFS, agent.path[-1][1], agent.path[-1][0]]:
-                    agent.req_action = Action.NOOP
-                    agent.busy = False
-                if agent.type == AgentType.PICKER and self.grid[_LAYER_AGENTS, agent.path[-1][1], agent.path[-1][0]] == 0:
-                    agent.req_action = Action.NOOP
-                    agent.busy = False
+                if agent.path and len(agent.path) == 1:
+                    if agent.carrying_shelf and self.grid[_LAYER_SHELFS, agent.path[-1][1], agent.path[-1][0]]:
+                        agent.req_action = Action.NOOP
+                        agent.busy = False
+                    if agent.type == AgentType.PICKER and (self.grid[_LAYER_AGENTS, agent.path[-1][1], agent.path[-1][0]] == 0 or self.agents[self.grid[_LAYER_AGENTS, agent.path[-1][1], agent.path[-1][0]] - 1].req_action != Action.TOGGLE_LOAD):
+                        agent.req_action = Action.NOOP
+                        agent.busy = False
 
         #  agents that can_carry should not collide
         clashes_count = self.resolve_move_conflict(self.agents)
