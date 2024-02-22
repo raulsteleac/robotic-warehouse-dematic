@@ -26,6 +26,7 @@ setup(
         "gym==0.21",
         "pyglet",
         "networkx",
+        "pyastar2d"
     ],
     extras_require={"test": ["pytest"]},
     include_package_data=True,

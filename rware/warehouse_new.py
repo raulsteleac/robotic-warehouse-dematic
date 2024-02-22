@@ -3,8 +3,8 @@ import logging
 from collections import defaultdict, OrderedDict
 import gym
 from gym import spaces
+import pyastar2d
 from rware.astar import AStar
-# from astar.search import AStar
 from rware.utils import MultiAgentActionSpace, MultiAgentObservationSpace
 from enum import Enum
 import numpy as np
@@ -13,6 +13,8 @@ from typing import List, Tuple, Optional, Dict
 import copy
 import networkx as nx
 import random
+
+USE_NEW_ASTAR = True
 
 def find_sections(pairs):
     groups = []
@@ -817,7 +819,20 @@ class Warehouse(gym.Env):
         grid[start[0], start[1]] = 0
         if not special_case_jump:
             grid = [list(map(int, l)) for l in (grid!=0)]
-            astar_path = AStar(grid).search(start, goal)
+
+            if USE_NEW_ASTAR:
+                grid2 = np.array(grid, dtype=np.float32)
+                grid2[np.where(grid2 == 1)] = np.inf
+                grid2[np.where(grid2 == 0)] = 1
+                astar_path2 = pyastar2d.astar_path(grid2, start, goal, allow_diagonal=False) # returns None if cant find path
+                if astar_path2 is not None:
+                    astar_path2 = [tuple(x) for x in list(astar_path2)] # convert back to other format
+                astar_path = astar_path2
+            else:
+                astar_path = AStar(grid).search(start, goal)
+
+
+
             if astar_path:
                 astar_path = astar_path[1:]
         else:
@@ -829,7 +844,17 @@ class Warehouse(gym.Env):
             grid[start[0], start[1]] = 1
             grid[special_start[0], special_start[1]] = 0
             grid = [list(map(int, l)) for l in (grid!=0)]
-            astar_path = AStar(grid).search(special_start, goal)
+
+            if USE_NEW_ASTAR:
+                grid2 = np.array(grid, dtype=np.float32)
+                grid2[np.where(grid2 == 1)] = np.inf
+                grid2[np.where(grid2 == 0)] = 1
+                astar_path2 = pyastar2d.astar_path(grid2, special_start, goal, allow_diagonal=False)
+                if astar_path2 is not None:
+                    astar_path2 = [tuple(x) for x in list(astar_path2)] # convert back to other format
+                astar_path = astar_path2
+            else:
+                astar_path = AStar(grid).search(special_start, goal)
         if astar_path:
             return [(x, y) for y, x in astar_path]
         else:
