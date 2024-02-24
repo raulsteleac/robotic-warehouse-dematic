@@ -794,15 +794,16 @@ class Warehouse(gym.Env):
 
         return obs
     
-    def find_path(self, start, goal, agent):
+    def find_path(self, start, goal, agent, care_for_agents = True):
         grid = np.zeros(self.grid_size)
         # if agent.type in [AgentType.AGV, AgentType.AGENT]:
-        grid += self.grid[_LAYER_AGENTS]
-        grid += self.grid[_LAYER_PICKERS]
-        if agent.type == AgentType.PICKER:
-            grid[goal[0], goal[1]] -= self.grid[_LAYER_AGENTS, goal[0], goal[1]]
-        else:
-            grid[goal[0], goal[1]] -= self.grid[_LAYER_PICKERS, goal[0], goal[1]]
+        if care_for_agents:
+            grid += self.grid[_LAYER_AGENTS]
+            grid += self.grid[_LAYER_PICKERS]
+            if agent.type == AgentType.PICKER:
+                grid[goal[0], goal[1]] -= self.grid[_LAYER_AGENTS, goal[0], goal[1]]
+            else:
+                grid[goal[0], goal[1]] -= self.grid[_LAYER_PICKERS, goal[0], goal[1]]
 
         special_case_jump = False
         if agent.type == AgentType.PICKER:
@@ -880,11 +881,11 @@ class Warehouse(gym.Env):
 
     def get_shelf_request_information(self):
         request_item_map = np.zeros(len(self.item_loc_dict) - len(self.goals))
-        requested_shelf_coords = [(shelf.y, shelf.x) for shelf in self.request_queue]
+        requested_shelf_ids = [shelf.id for shelf in self.request_queue]
         for id_, coords in self.item_loc_dict.items():
             if (coords[1], coords[0]) not in self.goals:
-                if self.grid[_LAYER_SHELFS, coords[0], coords[1]]!=0:
-                    request_item_map[id_ - len(self.goals) - 1] = int((coords[0], coords[1]) in requested_shelf_coords)
+                if self.grid[_LAYER_SHELFS, coords[0], coords[1]] in requested_shelf_ids:
+                    request_item_map[id_ - len(self.goals) - 1] = 1
         return request_item_map
     
     def get_empty_shelf_information(self):
@@ -1049,7 +1050,7 @@ class Warehouse(gym.Env):
                 # continue
             if not agent.busy:
                 if macro_action != 0:
-                    agent.path = self.find_path((agent.y, agent.x), self.item_loc_dict[macro_action], agent)
+                    agent.path = self.find_path((agent.y, agent.x), self.item_loc_dict[macro_action], agent, care_for_agents=False)
                     # If not path was found refuse location
                     if agent.path == []:
                         agent.busy = False
@@ -1149,7 +1150,7 @@ class Warehouse(gym.Env):
                         agent.busy = False
                 else:
                     agent.busy = False
-            elif agent.req_action == Action.TOGGLE_LOAD and agent.carrying_shelf:
+            elif agent.req_action == Action.TOGGLE_LOAD and agent.carrying_shelf and agent.type != AgentType.PICKER:
                 picker_id = self.grid[_LAYER_PICKERS, agent.y, agent.x]
                 if (agent.x, agent.y) in self.goals:
                     agent.busy = False
