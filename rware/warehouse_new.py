@@ -1030,7 +1030,7 @@ class Warehouse(gym.Env):
                             # If the agent's next action bumps it into another agent position after they take actions simultaneously
                             if agent.fixing_clash == 0 and other.fixing_clash == 0:
                                 agent.req_action = Action.NOOP # If the agent's actions leads them in the position of another STOP
-                                agent.fixing_clash = self.fixing_clash_time # Agent wait one step while the other moves into place
+                                agent.fixing_clash = 2 #self.fixing_clash_time  # Agent wait one step while the other moves into place
 
         commited_agents = set([self.agents[id_ - 1] for id_ in commited_agents])
         failed_agents = set(agent_list) - commited_agents
@@ -1074,9 +1074,12 @@ class Warehouse(gym.Env):
                     if agent.carrying_shelf and self.grid[_LAYER_SHELFS, agent.path[-1][1], agent.path[-1][0]]:
                         agent.req_action = Action.NOOP
                         agent.busy = False
-                    if agent.type == AgentType.PICKER and (self.grid[_LAYER_AGENTS, agent.path[-1][1], agent.path[-1][0]] == 0 or self.agents[self.grid[_LAYER_AGENTS, agent.path[-1][1], agent.path[-1][0]] - 1].req_action != Action.TOGGLE_LOAD):
-                        agent.req_action = Action.NOOP
-                        agent.busy = False
+                    if agent.type == AgentType.PICKER:
+                        if (self.grid[_LAYER_AGENTS, agent.path[-1][1], agent.path[-1][0]] == 0 or self.agents[self.grid[_LAYER_AGENTS, agent.path[-1][1], agent.path[-1][0]] - 1].req_action != Action.TOGGLE_LOAD):
+                            agent.req_action = Action.NOOP
+                            # agent.busy = False
+                        elif self.grid[_LAYER_AGENTS, agent.path[-1][1], agent.path[-1][0]] != 0 and self.agents[self.grid[_LAYER_AGENTS, agent.path[-1][1], agent.path[-1][0]] - 1].req_action == Action.TOGGLE_LOAD:
+                            self.stuck_count[agent.id - 1] = [0, (agent.x, agent.y)]
 
         #  agents that can_carry should not collide
         clashes_count = self.resolve_move_conflict(self.agents)
@@ -1105,6 +1108,8 @@ class Warehouse(gym.Env):
                                 new_path = self.find_path((agent.y, agent.x), (agent.path[-1][1] ,agent.path[-1][0]), agent)
                                 if new_path:
                                     agent.path = new_path
+                                    if agent.type == AgentType.PICKER and len(agent.path) == 1:
+                                        continue
                                     self.stuck_count[agent.id - 1] = [0, (agent.x, agent.y)]
                                     continue
                             else:
