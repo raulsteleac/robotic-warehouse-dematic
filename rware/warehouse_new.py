@@ -892,7 +892,7 @@ class Warehouse(gym.Env):
         empty_item_map = np.zeros(len(self.item_loc_dict) - len(self.goals))
         for id_, coords in self.item_loc_dict.items():
             if (coords[1], coords[0]) not in self.goals:
-                if self.grid[_LAYER_SHELFS, coords[0], coords[1]] == 0 and (self.grid[_LAYER_CARRIED_SHELFS, coords[0], coords[1]] == 0 or self.agents[self.grid[_LAYER_AGENTS, coords[0], coords[1]] - 1].req_action not in [Action.NOOP, Action.TOGGLE_LOAD]):
+                if self.grid[_LAYER_SHELFS, coords[0], coords[1]] == 0 and (self.grid[_LAYER_CARRIED_SHELFS, coords[0], coords[1]] == 0 or self.agents[self.grid[_LAYER_AGENTS, coords[0], coords[1]] - 1].req_action not in [Action.TOGGLE_LOAD]): # Action.NOOP, 
                     empty_item_map[id_ - len(self.goals) - 1] = 1
         return empty_item_map
     
@@ -1030,7 +1030,7 @@ class Warehouse(gym.Env):
                             # If the agent's next action bumps it into another agent position after they take actions simultaneously
                             if agent.fixing_clash == 0 and other.fixing_clash == 0:
                                 agent.req_action = Action.NOOP # If the agent's actions leads them in the position of another STOP
-                                agent.fixing_clash = 2 #self.fixing_clash_time  # Agent wait one step while the other moves into place
+                                agent.fixing_clash = self.fixing_clash_time  # Agent wait one step while the other moves into place
 
         commited_agents = set([self.agents[id_ - 1] for id_ in commited_agents])
         failed_agents = set(agent_list) - commited_agents
