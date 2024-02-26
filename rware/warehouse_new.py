@@ -892,7 +892,7 @@ class Warehouse(gym.Env):
         empty_item_map = np.zeros(len(self.item_loc_dict) - len(self.goals))
         for id_, coords in self.item_loc_dict.items():
             if (coords[1], coords[0]) not in self.goals:
-                if self.grid[_LAYER_SHELFS, coords[0], coords[1]] == 0 and (self.grid[_LAYER_CARRIED_SHELFS, coords[0], coords[1]] == 0 or self.agents[self.grid[_LAYER_AGENTS, coords[0], coords[1]] - 1].req_action not in [Action.TOGGLE_LOAD]): # Action.NOOP, 
+                if self.grid[_LAYER_SHELFS, coords[0], coords[1]] == 0 and (self.grid[_LAYER_CARRIED_SHELFS, coords[0], coords[1]] == 0 or self.agents[self.grid[_LAYER_AGENTS, coords[0], coords[1]] - 1].req_action not in [Action.NOOP, Action.TOGGLE_LOAD]):
                     empty_item_map[id_ - len(self.goals) - 1] = 1
         return empty_item_map
     
