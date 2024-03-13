@@ -1,8 +1,9 @@
-<p align="center">
+<!---
+ <p align="center">
  <img width="350px" src="docs/img/rware.png" align="center" alt="Multi-Robot Warehouse (RWARE)" />
  <p align="center">A multi-agent reinforcement learning environment</p>
 </p>
-
++ -->
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://GitHub.com/Naereen/StrapDown.js/graphs/commit-activity)
 [![GitHub license](https://img.shields.io/github/license/Naereen/StrapDown.js.svg)](https://github.com/Naereen/StrapDown.js/blob/master/LICENSE)
 
@@ -24,7 +25,7 @@
 
 # Environment Description
 
-The multi-robot warehouse (RWARE) environment simulates a warehouse with robots moving and delivering requested goods. The simulator is inspired by real-world applications, in which robots pick-up shelves and deliver them to a workstation. Humans access the content of a shelf, and then robots can return them to empty shelf locations.
+The task-assignment multi-robot warehouse (TA-RWARE) is an adaptation of the original multi-robot warehouse (RWARE) environment to enable a more realistic scenario where two groups of heterogenous agents are required to cooperate to execute a pick and the actions of each agent represent locations in the warehouse to facilitate this cooperation and direct optimization of pick-rate, measured in order-lines per hour. We denote one group of these agents as AGVs (carrier agents) and Pickers (loading agents).
 
 The environment is configurable: it allows for different sizes (difficulty), number of agents, communication capabilities, and reward settings (cooperative/individual). Of course, the parameters used in each experiment must be clearly reported to allow for fair comparisons between algorithms.
 
@@ -40,17 +41,20 @@ Below is an illustration of a small (10x20) warehouse with four trained agents. 
 ## Action Space
 In this simulation, robots have the following discrete action space:
 
-A={ Turn Left, Turn Right, Forward, Load/Unload Shelf }
+- Action space AGVs = {Shelf Locations, Goal Locations}
+- Action Space Pickers = {Shelf Locations}
 
-The first three actions allow each robot only to rotate and move forward. Loading/Unloading only works when an agent is beneath a shelf on one of the predesignated locations.
+One of the main challenges of this environment is the sheer size of the action space that scales with the layout of the warehouse. While this design introduces certain disadvantages, it facilitates easier cooperation between AGVs and Pickers that need to synchronize to meet at a certain shelf location at a certain time to execute a pick. The path traversal is solved through an A* algorithm, while collisions are avoided through an updated logic of the RWARE collision avoidance implementation. 
 
 ## Observation Space
-The observation of an agent is partially observable and consists of a 3x3 (configurable) square centred on the agent. Inside this limited grid, all entities are observable:
-- The location, the rotation and whether the agent is carrying a shelf.
-- The location and rotation of other robots.
-- Shelves and whether they are currently in the request queue.
+The observation of an agent is partially observable and consists of only the necessary information to optimally solve the task:
+- The current target and location of each agent
+- The carrying status for AGVs, together with the requested status of the shelf.
+- The loading status for AGVs
+- The status of each shelf location, occupied and requested.
 
 ## Dynamics: Collisions
+<!---
 The dynamics of the environment are also of particular interest. Like a real, 3-dimensional warehouse, the robots can move beneath the shelves. Of course, when the robots are loaded, they must use the corridors, avoiding any standing shelves.
 
 Any collisions are resolved in a way that allows for maximum mobility. When two or more agents attempt to move to the same location, we prioritise the one that also blocks others. Otherwise, the selection is done arbitrarily. The visuals below demonstrate the resolution of various collisions.
@@ -58,7 +62,7 @@ Any collisions are resolved in a way that allows for maximum mobility. When two 
  Example 1                 |   Example 2               | Example 3
 :-------------------------:|:-------------------------:|:-------------------------:
 ![](docs/img/collision1.gif)  |  ![](docs/img/collision2.gif)  |  ![](docs/img/collision3.gif)
-
++ -->
 ## Rewards
 At each time a set number of shelves R is requested. When a requested shelf is brought to a goal location, another shelf is uniformly sampled and added to the current requests. Agents are rewarded for successfully delivering a requested shelf to a goal location, with a reward of 1. A significant challenge in these environments is for agents to deliver requested shelves but also finding an empty location to return the previously delivered shelf. Having multiple steps between deliveries leads a very sparse reward signal.
 
