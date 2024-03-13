@@ -4,17 +4,13 @@ from collections import defaultdict, OrderedDict
 import gym
 from gym import spaces
 import pyastar2d
-from rware.astar import AStar
 from rware.utils import find_sections
 from enum import Enum
 import numpy as np
 import time
 from typing import List, Tuple, Optional, Dict
-import copy
 import networkx as nx
 import random
-
-USE_NEW_ASTAR = True
 
 _COLLISION_LAYERS = 4
 
@@ -798,19 +794,12 @@ class Warehouse(gym.Env):
         grid[start[0], start[1]] = 0
         if not special_case_jump:
             grid = [list(map(int, l)) for l in (grid!=0)]
-
-            if USE_NEW_ASTAR:
-                grid2 = np.array(grid, dtype=np.float32)
-                grid2[np.where(grid2 == 1)] = np.inf
-                grid2[np.where(grid2 == 0)] = 1
-                astar_path2 = pyastar2d.astar_path(grid2, start, goal, allow_diagonal=False) # returns None if cant find path
-                if astar_path2 is not None:
-                    astar_path2 = [tuple(x) for x in list(astar_path2)] # convert back to other format
-                astar_path = astar_path2
-            else:
-                astar_path = AStar(grid).search(start, goal)
-
-            if astar_path:
+            grid = np.array(grid, dtype=np.float32)
+            grid[np.where(grid == 1)] = np.inf
+            grid[np.where(grid == 0)] = 1
+            astar_path = pyastar2d.astar_path(grid, start, goal, allow_diagonal=False) # returns None if cant find path
+            if astar_path is not None:
+                astar_path = [tuple(x) for x in list(astar_path)] # convert back to other format
                 astar_path = astar_path[1:]
         else:
             special_start = None
@@ -821,22 +810,17 @@ class Warehouse(gym.Env):
             grid[start[0], start[1]] = 1
             grid[special_start[0], special_start[1]] = 0
             grid = [list(map(int, l)) for l in (grid!=0)]
-
-            if USE_NEW_ASTAR:
-                grid2 = np.array(grid, dtype=np.float32)
-                grid2[np.where(grid2 == 1)] = np.inf
-                grid2[np.where(grid2 == 0)] = 1
-                astar_path2 = pyastar2d.astar_path(grid2, special_start, goal, allow_diagonal=False)
-                if astar_path2 is not None:
-                    astar_path2 = [tuple(x) for x in list(astar_path2)] # convert back to other format
-                astar_path = astar_path2
-            else:
-                astar_path = AStar(grid).search(special_start, goal)
+            grid = np.array(grid, dtype=np.float32)
+            grid[np.where(grid == 1)] = np.inf
+            grid[np.where(grid == 0)] = 1
+            astar_path = pyastar2d.astar_path(grid, special_start, goal, allow_diagonal=False)
+            if astar_path is not None:
+                astar_path = [tuple(x) for x in list(astar_path)] # convert back to other format
+            astar_path = astar_path
         if astar_path:
             return [(x, y) for y, x in astar_path]
         else:
             return []
-            
 
     def _recalc_grid(self):
         self.grid[:] = 0
