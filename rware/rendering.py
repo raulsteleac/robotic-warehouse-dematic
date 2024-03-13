@@ -11,7 +11,7 @@ import numpy as np
 import math
 import six
 from gym import error
-from rware.warehouse_new import Direction, AgentType
+from rware.warehouse import Direction, AgentType
 
 if "Apple" in sys.version:
     if "DYLD_FALLBACK_LIBRARY_PATH" in os.environ:
