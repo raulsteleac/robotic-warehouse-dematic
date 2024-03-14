@@ -1,9 +1,9 @@
-<!---
+
  <p align="center">
- <img width="350px" src="docs/img/rware.png" align="center" alt="Multi-Robot Warehouse (RWARE)" />
- <p align="center">A multi-agent reinforcement learning environment</p>
+ <p align="center">TA-RWARE: Task-Assignment Multi-Robot Warehouse </p>
+ <img width="350px" src="docs/img/tarware_explanation.png" align="center" alt="Task-Assignment Multi-Robot Warehouse (RWARE)" />
 </p>
-+ -->
+
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://GitHub.com/Naereen/StrapDown.js/graphs/commit-activity)
 [![GitHub license](https://img.shields.io/github/license/Naereen/StrapDown.js.svg)](https://github.com/Naereen/StrapDown.js/blob/master/LICENSE)
 
