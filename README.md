@@ -136,7 +136,7 @@ The logic for running one heuristics episode can be found in `tarware/heuristic.
 
 ```sh
 
-python scripts/run_heuristic.py --seed=0 --render
+python scripts/run_heuristic.py --num_episodes=10000 --seed=0 --render
 
 ```
 # Please Cite
