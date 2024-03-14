@@ -9,6 +9,12 @@ from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 parser = ArgumentParser(description="Run tests with vector environments on WarehouseEnv", formatter_class=ArgumentDefaultsHelpFormatter)
 
 parser.add_argument(
+        "--num_episodes",
+        default=1000,
+        type=int,
+        help="The seed to run with"
+    )
+parser.add_argument(
         "--seed",
         default=0,
         type=int,
@@ -40,28 +46,12 @@ def info_statistics(infos, global_episode_return, episode_returns):
     last_info["episode_returns"] = episode_returns
     return last_info
 
-@dataclass
-class TARWAREConfig:
-    num_agvs = 12
-    num_pickers = 7
-    shelf_columns = 5
-    column_height = 8
-    num_goals = 8
-    shelf_rows = 3
-    msg_bits = 0
-    sensor_range = 1
-    request_queue_size = 28
-    max_steps = 500
-    global_observations = True
-    num_episodes= 10000
-
 if __name__ == "__main__":
-    env_conf = TARWAREConfig()
     env = gym.make("tarware-tiny-3agvs-2pickers-ag-easy-v1")
     seed = args.seed
     env.seed(seed)
     completed_episodes = 0
-    for _ in range(env_conf.num_episodes):
+    for _ in range(args.num_episodes):
         infos, global_episode_return, episode_returns = heuristic_episode(env.unwrapped, args.render)
         last_info = info_statistics(infos, global_episode_return, episode_returns)
         last_info["overall_pick_rate"] = last_info.get("total_deliveries") * 3600 / (5 * last_info['episode_length'])
