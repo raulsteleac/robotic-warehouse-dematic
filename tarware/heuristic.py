@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from enum import Enum
 
 import numpy as np
-from rware.warehouse import Agent, AgentType
-from rware.utils.utils import flatten_list, split_list
+from tarware.warehouse import Agent, AgentType
+from tarware.utils.utils import flatten_list, split_list
 
 class MissionType(Enum):
     PICKING = 1
@@ -21,8 +21,9 @@ class Mission:
     location_y: int
     assigned_time: int
     at_location: bool = False
+    
 
-def heuristic_episode(env):
+def heuristic_episode(env, render=False):
     # non_goal_location_ids corresponds to the item ordering in `get_empty_shelf_information`
     non_goal_location_ids = []
     for id_, coords in env.item_loc_dict.items():
@@ -131,8 +132,9 @@ def heuristic_episode(env):
             actions[agv] = mission.location_id if not agv.busy else 0
         for picker, mission in assigned_pickers.items():
             actions[picker] = mission.location_id
-
         # macro_action should be the index of self.item_loc_dict
+        if render:
+            env.render("human")
         observation, reward, done, info = env.step(list(actions.values()))
         episode_returns += np.array(reward, dtype=np.float64)
         global_episode_return += np.sum(reward)

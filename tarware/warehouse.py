@@ -4,7 +4,7 @@ from collections import defaultdict, OrderedDict
 import gym
 from gym import spaces
 import pyastar2d
-from rware.utils import find_sections
+from tarware.utils import find_sections
 from enum import Enum
 import numpy as np
 import time
@@ -180,13 +180,11 @@ class Warehouse(gym.Env):
 
     def __init__(
         self,
-        global_observations: bool,
         shelf_columns: int,
         column_height: int,
         shelf_rows: int,
         n_agvs: int,
         n_pickers: int,
-        n_goals: int,
         msg_bits: int,
         sensor_range: int,
         request_queue_size: int,
@@ -195,14 +193,6 @@ class Warehouse(gym.Env):
         reward_type: RewardType,
         layout: str = None,
         observation_type: ObserationType=ObserationType.FLATTENED,
-        image_observation_layers: List[ImageLayer]=[
-            ImageLayer.SHELVES,
-            ImageLayer.REQUESTS,
-            ImageLayer.AGENTS,
-            ImageLayer.GOALS,
-            ImageLayer.ACCESSIBLE
-        ],
-        image_observation_directional: bool=True,
         normalised_coordinates: bool=False,
     ):
         """The robotic warehouse environment
@@ -243,8 +233,10 @@ class Warehouse(gym.Env):
         :type column_height: int
         :param shelf_rows: Number of columns in the warehouse
         :type shelf_rows: int
-        :param n_agents: Number of spawned and controlled agents
-        :type n_agents: int
+        :param n_agvs: Number of spawned and controlled agv
+        :type n_agvs: int
+        :param n_pickers: Number of spawned and controlled pickers
+        :type n_pickers: int
         :param msg_bits: Number of communication bits for each agent
         :type msg_bits: int
         :param sensor_range: Range of each agents observation
@@ -274,7 +266,6 @@ class Warehouse(gym.Env):
         self.n_agvs = n_agvs
         self.n_pickers = n_pickers
         self.n_agents_ = n_agvs + n_pickers
-        self.num_goals = n_goals
 
         if not layout:
             self._make_layout_from_params(shelf_columns, shelf_rows, column_height)
@@ -291,9 +282,6 @@ class Warehouse(gym.Env):
         self.reward_type = reward_type
         self.reward_range = (0, 1)
         self.no_need_return_item = False
-        self.global_observations = global_observations
-        if self.global_observations:
-            self.sensor_range = 0
         self.fixing_clash_time = 4
         self._cur_inactive_steps = None
         self._cur_steps = 0
@@ -322,12 +310,7 @@ class Warehouse(gym.Env):
         self.image_obs = None
         self.observation_space_ = None
         self.rack_groups = find_sections(list([loc for loc in self.item_loc_dict.values() if (loc[1], loc[0]) not in self.goals]))
-        if observation_type == ObserationType.IMAGE:
-            self._use_image_obs(image_observation_layers, image_observation_directional)
-        else:
-            # used for DICT observation type and needed as preceeding stype to generate
-            # FLATTENED observations as well
-            self._use_slow_obs()
+        self._use_slow_obs()
 
         # for performance reasons we
         # can flatten the obs vector
@@ -428,41 +411,6 @@ class Warehouse(gym.Env):
 
         assert len(self.goals) >= 1, "At least one goal is required"
 
-    def _use_image_obs(self, image_observation_layers, directional=True):
-        """
-        Set image observation space
-        :param image_observation_layers (List[ImageLayer]): list of layers to use as image channels
-        :param directional (bool): flag whether observations should be directional (pointing in
-            direction of agent or north-wise)
-        """
-        self.image_obs = True
-        self.fast_obs = False
-        self.image_observation_directional = directional
-        self.image_observation_layers = image_observation_layers
-
-        observation_shape = (1 + 2 * self.sensor_range, 1 + 2 * self.sensor_range)
-
-        layers_min = []
-        layers_max = []
-        for layer in image_observation_layers:
-            if layer == ImageLayer.AGENT_DIRECTION:
-                # directions as int
-                layer_min = np.zeros(observation_shape, dtype=np.float32)
-                layer_max = np.ones(observation_shape, dtype=np.float32) * max([d.value + 1 for d in Direction])
-            else:
-                # binary layer
-                layer_min = np.zeros(observation_shape, dtype=np.float32)
-                layer_max = np.ones(observation_shape, dtype=np.float32)
-            layers_min.append(layer_min)
-            layers_max.append(layer_max)
-
-        # total observation
-        min_obs = np.stack(layers_min)
-        max_obs = np.stack(layers_max)
-        self.observation_space_ = spaces.Tuple(
-            tuple([spaces.Box(min_obs, max_obs, dtype=np.float32)] * self.n_agents_)
-        )
-
     def _use_slow_obs(self):
         self.fast_obs = False
 
@@ -474,10 +422,9 @@ class Warehouse(gym.Env):
         self._obs_bits_per_shelf = 1 #+ 1
         self._obs_bits_for_requests = 1
 
-        if self.global_observations:
-            self._obs_sensor_locations = len(self.item_loc_dict) - len(self.goals) #self.grid_size[0] * self.grid_size[1]
-        else:
-            raise RuntimeError
+
+        self._obs_sensor_locations = len(self.item_loc_dict) - len(self.goals) #self.grid_size[0] * self.grid_size[1]
+        
         self._obs_length = (
             self._obs_bits_for_agvs * self.n_agvs
             + self._obs_bits_for_pickers * self.n_pickers
@@ -620,16 +567,10 @@ class Warehouse(gym.Env):
                     obs = np.rot90(obs, k=1, axes=(1,2))
                 # no rotation needed for UP direction
             return obs
-        if self.global_observations:
-            min_x = 0
-            max_x = self.grid_size[1]
-            min_y = 0
-            max_y = self.grid_size[0]
-        else:
-            min_x = agent.x - self.sensor_range
-            max_x = agent.x + self.sensor_range + 1
-            min_y = agent.y - self.sensor_range
-            max_y = agent.y + self.sensor_range + 1
+        min_x = 0
+        max_x = self.grid_size[1]
+        min_y = 0
+        max_y = self.grid_size[0]
 
         # sensors
         if (
@@ -1218,7 +1159,7 @@ class Warehouse(gym.Env):
 
     def render(self, mode="human"):
         if not self.renderer:
-            from rware.rendering import Viewer
+            from tarware.rendering import Viewer
 
             self.renderer = Viewer(self.grid_size)
         return self.renderer.render(self, return_rgb_array=mode == "rgb_array")
@@ -1231,19 +1172,3 @@ class Warehouse(gym.Env):
         np.random.seed(seed)
         random.seed(seed)
     
-
-if __name__ == "__main__":
-    env = Warehouse(9, 8, 3, 10, 3, 1, 5, None, None, RewardType.GLOBAL)
-    env.reset()
-    import time
-    from tqdm import tqdm
-
-    time.sleep(2)
-    # env.render()
-    # env.step(18 * [Action.LOAD] + 2 * [Action.NOOP])
-
-    for _ in tqdm(range(1000000)):
-        # time.sleep(2)
-        # env.render()
-        actions = env.action_space.sample()
-        env.step(actions)

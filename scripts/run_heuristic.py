@@ -1,7 +1,8 @@
 
 from dataclasses import dataclass
-from rware.heuristic import heuristic_episode
-from rware.warehouse import RewardType, Warehouse
+import gym
+from tarware.heuristic import heuristic_episode
+from tarware.warehouse import RewardType, Warehouse
 
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 
@@ -12,6 +13,11 @@ parser.add_argument(
         default=0,
         type=int,
         help="The seed to run with"
+    )
+
+parser.add_argument(
+        "--render",
+        action='store_true',
     )
 
 args = parser.parse_args()
@@ -36,7 +42,6 @@ def info_statistics(infos, global_episode_return, episode_returns):
 
 @dataclass
 class TARWAREConfig:
-    num_managers =  1
     num_agvs = 12
     num_pickers = 7
     shelf_columns = 5
@@ -52,27 +57,12 @@ class TARWAREConfig:
 
 if __name__ == "__main__":
     env_conf = TARWAREConfig()
-    env = Warehouse(
-        n_agvs = env_conf.num_agvs,
-        n_pickers = env_conf.num_pickers,
-        global_observations = env_conf.global_observations,
-        n_goals = env_conf.num_goals,
-        shelf_columns = env_conf.shelf_columns,
-        column_height = env_conf.column_height,
-        shelf_rows = env_conf.shelf_rows,
-        msg_bits = env_conf.msg_bits,
-        sensor_range = env_conf.sensor_range,
-        request_queue_size = env_conf.request_queue_size,
-        max_steps = env_conf.max_steps,
-        max_inactivity_steps = None,
-        reward_type = RewardType.INDIVIDUAL,
-    )
+    env = gym.make("tarware-tiny-3agvs-2pickers-ag-easy-v1")
     seed = args.seed
     env.seed(seed)
-    
     completed_episodes = 0
     for _ in range(env_conf.num_episodes):
-        infos, global_episode_return, episode_returns = heuristic_episode(env.unwrapped)
+        infos, global_episode_return, episode_returns = heuristic_episode(env.unwrapped, args.render)
         last_info = info_statistics(infos, global_episode_return, episode_returns)
         last_info["overall_pick_rate"] = last_info.get("total_deliveries") * 3600 / (5 * last_info['episode_length'])
         print(f"Completed Episode {completed_episodes}: | [Overall Pick Rate={last_info.get('overall_pick_rate'):.2f}]| [Global return={last_info.get('global_episode_return'):.2f}]| [Total shelf deliveries={last_info.get('total_deliveries'):.2f}]| [Total clashes={last_info.get('total_clashes'):.2f}]| [Total stuck={last_info.get('total_stuck'):.2f}]")
