@@ -20,6 +20,7 @@
   - [Custom layout](#custom-layout)
 - [Installation](#installation)
 - [Getting Started](#getting-started)
+- [Heuristic](#heuristic)
 - [Please Cite](#please-cite)
 
 
