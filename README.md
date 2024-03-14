@@ -26,7 +26,7 @@
 
 # Environment Description
 
-The task-assignment multi-robot warehouse (TA-RWARE) is an adaptation of the original multi-robot warehouse (RWARE) environment to enable a more realistic scenario where two groups of heterogenous agents are required to cooperate to execute a pick and the actions of each agent represent locations in the warehouse to facilitate this cooperation and direct optimization of pick-rate, measured in order-lines per hour. We denote one group of these agents as AGVs (carrier agents) and Pickers (loading agents).
+The task-assignment multi-robot warehouse (TA-RWARE) is an adaptation of the  [original multi-robot warehouse (RWARE)]([https://github.com/semitable/robotic-warehouse](https://github.com/uoe-agents/robotic-warehouse)) environment to enable a more realistic scenario where two groups of heterogenous agents are required to cooperate to execute a pick and the actions of each agent represent locations in the warehouse to facilitate this cooperation and direct optimization of pick-rate, measured in order-lines per hour. We denote one group of these agents as AGVs (carrier agents) and Pickers (loading agents).
 
 The environment is configurable: it allows for different sizes (difficulty), number of agents, communication capabilities, and reward settings (cooperative/individual). Of course, the parameters used in each experiment must be clearly reported to allow for fair comparisons between algorithms.
 
