@@ -24,7 +24,8 @@ setup(
     install_requires=[
         "numpy",
         "gym==0.21",
-        "pyglet",
+        "six==1.16.0",
+        "pyglet==1.5.11",
         "networkx",
         "pyastar2d"
     ],
