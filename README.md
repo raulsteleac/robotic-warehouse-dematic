@@ -1,6 +1,6 @@
 
- <p align="center">
  <p align="center">TA-RWARE: Task-Assignment Multi-Robot Warehouse </p>
+ <p align="center">
  <img width="350px" src="docs/img/tarware_explanation.png" align="center" alt="Task-Assignment Multi-Robot Warehouse (RWARE)" />
 </p>
 
