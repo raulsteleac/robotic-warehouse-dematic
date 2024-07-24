@@ -1,16 +1,15 @@
 import os
 import sys
 import pytest
-import gym
+import gymnasium as gym
 import numpy as np
-from gym import spaces
+from gymnasium import spaces
 
 TEST_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.abspath(os.path.join(TEST_DIR, os.pardir))
 sys.path.insert(0, PROJECT_DIR)
 
-from rware.warehouse import ObserationType, Warehouse, Direction, Action, RewardType
-
+from tarware.warehouse import ObserationType, Warehouse, Direction, Action, RewardType
 
 @pytest.fixture
 def env_single_agent():
