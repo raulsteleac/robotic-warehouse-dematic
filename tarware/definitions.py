@@ -1,4 +1,4 @@
-from enum import Enum
+from enum import Enum, IntEnum
 
 
 class AgentType(Enum):
@@ -37,3 +37,9 @@ class ImageLayer(Enum):
     ACCESSIBLE = 6 # binary layer indicating accessible cells (all but occupied cells/ out of map)
     PICKERS = 7 # binary layer indicating agents in the environment which only can_load
     PICKERS_DIRECTION = 8 # layer indicating agent directions as int (see Direction enum + 1 for values)
+
+class CollisionLayers(IntEnum):
+    AGVS = 0
+    PICKERS = 1
+    SHELFS = 2
+    CARRIED_SHELFS = 3
