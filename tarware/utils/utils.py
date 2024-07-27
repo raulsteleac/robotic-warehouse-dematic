@@ -83,30 +83,3 @@ def find_sections(pairs):
             groups.append([pair])
 
     return groups
-
-def comput_valid_action_masks(env, pickers_to_agvs=True, block_conflicting_actions=True):
-    requested_items = env.get_shelf_request_information()
-    empty_items = env.get_empty_shelf_information()
-    carrying_shelf_info = env.get_carrying_shelf_information()
-    targets_agvs = [agent.target - len(env.goals) - 1 for agent in env.agents[:env.num_agvs] if agent.target > len(env.goals)] 
-    targets_pickers = [agent.target - len(env.goals) - 1 for agent in env.agents[env.num_agvs:] if agent.target > len(env.goals)] 
-    # Compute valid location list for AGVs
-    valid_location_list_agvs = np.array([
-        empty_items if carrying_shelf else requested_items for carrying_shelf in carrying_shelf_info
-    ])
-    # Compute valid location list for Pickers
-    if pickers_to_agvs:
-        valid_location_list_pickers = np.zeros(len(env.action_id_to_coords_map) - len(env.goals))
-        valid_location_list_pickers[targets_agvs] = 1
-    else:
-        valid_location_list_pickers = requested_items
-    # Mask out conflicting actions for agents of the same type
-    if block_conflicting_actions:
-        valid_location_list_agvs[:, targets_agvs] = 0
-        valid_location_list_pickers[targets_pickers] = 0
-    valid_action_masks = np.ones((len(env.action_space), spaces.flatdim(env.action_space[0])))
-    valid_action_masks[:env.num_agvs,  1 : 1 + len(env.goals)] = np.repeat(np.expand_dims(np.array(carrying_shelf_info), 1), len(env.goals), axis=1)
-    valid_action_masks[:env.num_agvs,  1 + len(env.goals):] = valid_location_list_agvs
-    valid_action_masks[env.num_agvs:,  1 : 1 + len(env.goals)] = 0
-    valid_action_masks[env.num_agvs:,  1 + len(env.goals):] = valid_location_list_pickers
-    return valid_action_masks

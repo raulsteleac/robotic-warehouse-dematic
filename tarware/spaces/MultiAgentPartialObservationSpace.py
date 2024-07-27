@@ -32,29 +32,28 @@ class MultiAgentPartialObservationSpace(MultiAgentBaseObservationSpace):
     def _define_obs_length_agvs(self):
         location_space = spaces.Box(low=0.0, high=max(self.grid_size), shape=(2,), dtype=np.float32)
 
-        self._obs_bits_for_agvs = spaces.flatdim(location_space)  + spaces.flatdim(location_space)
-        self._obs_bits_for_pickers = spaces.flatdim(location_space)  + spaces.flatdim(location_space)
-        self._obs_bits_per_shelf = 1
-        self._obs_bits_for_requests = 1
+        self.agvs_obs_bits_for_agvs = (spaces.flatdim(location_space)  + spaces.flatdim(location_space)) * self.num_agvs
+        self.agvs_obs_bits_for_pickers = (spaces.flatdim(location_space)  + spaces.flatdim(location_space)) * self.num_pickers
+        self.agvs_obs_bits_per_shelf = 1 * self.shelf_locations
+        self.agvs_obs_bits_for_requests = 1 * self.shelf_locations
 
         self._obs_length_agvs = (
-            self._obs_bits_for_agvs * self.num_agvs
-            + self._obs_bits_for_pickers * self.num_pickers
-            + self.shelf_locations * (self._obs_bits_per_shelf
-            + self._obs_bits_for_requests)
+            self.agvs_obs_bits_for_agvs
+            + self.agvs_obs_bits_for_pickers
+            + self.agvs_obs_bits_per_shelf
+            + self.agvs_obs_bits_for_requests
         )
 
     def _define_obs_length_pickers(self):
         location_space = spaces.Box(low=0.0, high=max(self.grid_size), shape=(2,), dtype=np.float32)
 
-        self._obs_bits_for_agvs = 3 + spaces.flatdim(location_space)  + spaces.flatdim(location_space)
-        self._obs_bits_for_pickers = spaces.flatdim(location_space)  + spaces.flatdim(location_space)
+        self.pickers_obs_bits_for_agvs = (3 + spaces.flatdim(location_space)  + spaces.flatdim(location_space)) * self.num_agvs
+        self.pickers_obs_bits_for_pickers = (spaces.flatdim(location_space)  + spaces.flatdim(location_space)) * self.num_pickers
 
         self._obs_length_pickers = (
-            self._obs_bits_for_agvs * self.num_agvs
-            + self._obs_bits_for_pickers * self.num_pickers
+            self.pickers_obs_bits_for_agvs
+            + self.pickers_obs_bits_for_pickers
         )
-
 
     def observation(self, agent, environment):        
         # write flattened observations

@@ -11,7 +11,7 @@ class MultiAgentGlobalObservationSpace(MultiAgentBaseObservationSpace):
         super(MultiAgentGlobalObservationSpace, self).__init__(num_agvs, num_pickers, grid_size, shelf_locations, normalised_coordinates)
 
         self._define_obs_length()
-        self.obs_lengths = [self._obs_length for _ in range(self.num_agents)]
+        self.obs_lengths = [self.obs_length for _ in range(self.num_agents)]
 
         ma_spaces = []
         for obs_length in self.obs_lengths:
@@ -29,16 +29,15 @@ class MultiAgentGlobalObservationSpace(MultiAgentBaseObservationSpace):
     def _define_obs_length(self):
         location_space = spaces.Box(low=0.0, high=max(self.grid_size), shape=(2,), dtype=np.float32)
 
-        self._obs_bits_for_agvs = 3 + spaces.flatdim(location_space)  + spaces.flatdim(location_space)
-        self._obs_bits_for_pickers = spaces.flatdim(location_space)  + spaces.flatdim(location_space)
-        self._obs_bits_per_shelf = 1
-        self._obs_bits_for_requests = 1
-
-        self._obs_length = (
-            self._obs_bits_for_agvs * self.num_agvs
-            + self._obs_bits_for_pickers * self.num_pickers
-            + self.shelf_locations * (self._obs_bits_per_shelf
-            + self._obs_bits_for_requests)
+        self.obs_bits_for_agvs = (3 + spaces.flatdim(location_space)  + spaces.flatdim(location_space)) * self.num_agvs
+        self.obs_bits_for_pickers = (spaces.flatdim(location_space)  + spaces.flatdim(location_space)) * self.num_pickers
+        self.obs_bits_per_shelf = 1 * self.shelf_locations
+        self.obs_bits_for_requests = 1 * self.shelf_locations
+        self.obs_length = (
+            self.obs_bits_for_agvs
+            + self.obs_bits_for_pickers
+            + self.obs_bits_per_shelf
+            + self.obs_bits_for_requests
         )
 
     def observation(self, agent, environment):        
