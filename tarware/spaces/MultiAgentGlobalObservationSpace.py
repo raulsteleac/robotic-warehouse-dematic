@@ -1,7 +1,7 @@
 import numpy as np
 from gymnasium import spaces
 
-from tarware.definitions import Action, AgentType
+from tarware.definitions import Action, AgentType, CollisionLayers
 from tarware.spaces.MultiAgentBaseObservationSpace import (
     MultiAgentBaseObservationSpace, _VectorWriter)
 
@@ -45,13 +45,13 @@ class MultiAgentGlobalObservationSpace(MultiAgentBaseObservationSpace):
         obs = _VectorWriter(self.ma_spaces[agent.id - 1].shape[0])
         # Agent self observation
         if agent.type == AgentType.AGV:
-            if agent.carrying_shelf!=0:
+            if agent.carrying_shelf:
                 obs.write([1, int(agent.carrying_shelf in environment.request_queue)])
             else:
                 obs.skip(2)
             obs.write([agent.req_action == Action.TOGGLE_LOAD])
         obs.write(self.process_coordinates((agent.y, agent.x), environment))
-        if agent.target!=0:
+        if agent.target:
             obs.write(self.process_coordinates(environment.action_id_to_coords_map[agent.target], environment))
         else:
             obs.skip(2)
@@ -60,13 +60,13 @@ class MultiAgentGlobalObservationSpace(MultiAgentBaseObservationSpace):
         for agent_ in environment.agents:
             if agent_.id != agent.id:
                 if agent_.type == AgentType.AGV:
-                    if agent_.carrying_shelf!=0:
+                    if agent_.carrying_shelf:
                         obs.write([1, int(agent_.carrying_shelf in environment.request_queue)])
                     else:
                         obs.skip(2)
                     obs.write([agent_.req_action == Action.TOGGLE_LOAD])
                 obs.write(self.process_coordinates((agent_.y, agent_.x), environment))
-                if agent_.target!=0:
+                if agent_.target:
                     obs.write(self.process_coordinates(environment.action_id_to_coords_map[agent_.target], environment))
                 else:
                     obs.skip(2)
@@ -74,8 +74,8 @@ class MultiAgentGlobalObservationSpace(MultiAgentBaseObservationSpace):
         # Shelves observation
         for group in environment.rack_groups:
             for (x, y) in group:
-                id_shelf = environment.grid[1, x, y]
-                if id_shelf!=0:
+                id_shelf = environment.grid[CollisionLayers.SHELFS, x, y]
+                if id_shelf:
                     obs.write([1.0 , int(environment.shelfs[id_shelf - 1] in environment.request_queue)])
                 else:
                     obs.skip(2)

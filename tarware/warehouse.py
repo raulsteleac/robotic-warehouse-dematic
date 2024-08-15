@@ -74,10 +74,6 @@ class Shelf(Entity):
         Shelf.counter += 1
         super().__init__(Shelf.counter, x, y)
 
-    @property
-    def collision_layers(self):
-        return ()
-
 class StuckCounter:
     def __init__(self, position: Tuple[int, int]):
         self.position = position
@@ -174,7 +170,6 @@ class Warehouse(gym.Env):
         self.num_pickers = num_pickers
         self.num_agents = num_agvs + num_pickers
 
-        self.reward_type = reward_type
         self._make_layout_from_params(shelf_columns, shelf_rows, column_height)
         # If no Pickers are generated, AGVs can perform picks independently
         if num_pickers > 0:
@@ -183,6 +178,7 @@ class Warehouse(gym.Env):
             self._agent_types = [AgentType.AGENT for _ in range(self.num_agents)]
 
         self.max_inactivity_steps: Optional[int] = max_inactivity_steps
+        self.reward_type = reward_type
         self._cur_inactive_steps = None
         self._cur_steps = 0
         self.max_steps = max_steps
@@ -283,10 +279,8 @@ class Warehouse(gym.Env):
         if care_for_agents:
             grid += self.grid[CollisionLayers.AGVS]
             grid += self.grid[CollisionLayers.PICKERS]
-            if agent.type == AgentType.PICKER:
-                grid[goal[0], goal[1]] -= self.grid[CollisionLayers.AGVS, goal[0], goal[1]]
-            else:
-                grid[goal[0], goal[1]] -= self.grid[CollisionLayers.PICKERS, goal[0], goal[1]]
+        # Agents should start a path regardless if some others are waiting around the target location
+        grid[goal[0], goal[1]] = 0
 
         if agent.type == AgentType.PICKER:
             # Pickers can only travel through the highway, but cann access goal locations
@@ -294,8 +288,6 @@ class Warehouse(gym.Env):
             grid[goal[0], goal[1]] -= not self._is_highway(goal[1], goal[0])
             for i in range(self.grid_size[1]):
                 grid[self.grid_size[0] - 1, i] = 1
-
-        grid[start[0], start[1]] = 0
 
         # Ban Pickers crossing through racks if adjacent target location is chosen and force them thake the long way around.
         start_fix = (0, 0)
@@ -312,9 +304,10 @@ class Warehouse(gym.Env):
         grid[np.where(grid == 1)] = np.inf
         grid[np.where(grid == 0)] = 1
         astar_path = pyastar2d.astar_path(grid, np.add(start, start_fix), goal, allow_diagonal=False) # returns None if cant find path
+        # astar_path = astar_path[int(np.where(astar_path == np.add(start, start_fix))[0][0]):]
         if astar_path is not None:
             astar_path = [tuple(x) for x in list(astar_path)] # convert back to other format
-            astar_path = astar_path[1 - int(grid[start[0], start[1]] == np.inf):]
+            astar_path = astar_path[1 - int(grid[start[0], start[1]] > 1):]
 
         if astar_path:
             return [(x, y) for y, x in astar_path]
@@ -360,20 +353,6 @@ class Warehouse(gym.Env):
                     empty_item_map[id_ - len(self.goals) - 1] = 1
         return empty_item_map
 
-    def get_shelf_dispatch_information(self) -> np.ndarray[int]:
-        dispatch_item_map = np.zeros(len(self.shelfs))
-        for id_, coords in self.action_id_to_coords_map.items():
-            if (coords[1], coords[0]) not in self.goals:
-                if (
-                    self.grid[CollisionLayers.AGVS, coords[0], coords[1]] != 0
-                    and self.agents[
-                        self.grid[CollisionLayers.AGVS, coords[0], coords[1]] - 1
-                    ].req_action
-                    == Action.TOGGLE_LOAD
-                ):
-                    dispatch_item_map[id_ - len(self.goals) - 1] = 1
-        return dispatch_item_map
-
     def attribute_macro_actions(self, macro_actions: List[int]) -> Tuple[int, int]:
         agvs_distance_travelled = 0
         pickrs_distance_travelled = 0
@@ -385,6 +364,7 @@ class Warehouse(gym.Env):
             if agent.fixing_clash > 0:
                 agent.fixing_clash -= 1
             if not agent.busy:
+                agent.target = 0
                 if macro_action != 0:
                     agent.path = self.find_path((agent.y, agent.x), self.action_id_to_coords_map[macro_action], agent, care_for_agents=False)
                     if agent.path:
@@ -394,10 +374,10 @@ class Warehouse(gym.Env):
                         self.stuck_counters[agent.id - 1].reset((agent.x, agent.y))
             else:
                 # Check if agent finished the given path, if not continue the path
-                if not agent.path:
-                    if agent.type != AgentType.PICKER:
+                if agent.path == []:
+                    if agent.type in [AgentType.AGV, AgentType.AGENT]:
                         agent.req_action = Action.TOGGLE_LOAD
-                    if agent.type != AgentType.AGV:
+                    if agent.type == AgentType.PICKER:
                         agent.busy = False
                 else:
                     agent.req_action = get_next_micro_action(agent.x, agent.y, agent.dir, agent.path[0])
@@ -412,7 +392,7 @@ class Warehouse(gym.Env):
                     if agent.type == AgentType.PICKER:
                         if (
                             self.grid[CollisionLayers.AGVS, agent.path[-1][1], agent.path[-1][0]] == 0
-                            or self.agents[self.grid[CollisionLayers.AGVS, agent.path[-1][1], agent.path[-1][0]]- 1].req_action!= Action.TOGGLE_LOAD
+                            or self.agents[self.grid[CollisionLayers.AGVS, agent.path[-1][1], agent.path[-1][0]]- 1].req_action != Action.TOGGLE_LOAD
                         ):
                             agent.req_action = Action.NOOP
                         elif (
@@ -483,7 +463,7 @@ class Warehouse(gym.Env):
                             if (other_new_x, other_new_y) in [(agent.x, agent.y), (agent_new_x, agent_new_y)] and not other.req_action in (Action.LEFT, Action.RIGHT):
                                 if other.fixing_clash == 0:# If the others are not already fixing the clash
                                     clashes+=1
-                                    agent.fixing_clash =_FIXING_CLASH_TIME # Agent start time for clash fixing
+                                    agent.fixing_clash = _FIXING_CLASH_TIME # Agent start time for clash fixing
                                     new_path = self.find_path((agent.y, agent.x), (agent.path[-1][1] ,agent.path[-1][0]), agent)
                                     if new_path != []: # If the agent can find an alternative path, assign it if not let the other solve the clash
                                         agent.path = new_path
@@ -508,8 +488,8 @@ class Warehouse(gym.Env):
             agent
             for agent in self.agents
             if agent.busy
-            and agent.req_action not in (Action.LEFT, Action.RIGHT, Action.TOGGLE_LOAD)
-            and (agent.x, agent.y) not in self.goals
+            and agent.req_action not in (Action.LEFT, Action.RIGHT) # Don't count changing directions
+            and (agent.req_action!=Action.TOGGLE_LOAD or (agent.x, agent.y) in self.goals) # Don't count loading or changing directions / if at goal
         ]
         for agent in moving_agents:
             agent_stuck_count = self.stuck_counters[agent.id - 1]
@@ -519,16 +499,19 @@ class Warehouse(gym.Env):
                 if agent.path:
                     new_path = self.find_path((agent.y, agent.x), (agent.path[-1][1], agent.path[-1][0]), agent)
                     # Picker should wait for AGV to arrive at destination regardless of stuck count
-                    if agent.type == AgentType.PICKER and len(new_path) == 1:
-                        continue
                     if new_path:
                         agent.path = new_path
-                        agent_stuck_count.reset()
+                        if len(agent.path) == 1:
+                            continue
+                        agent_stuck_count.reset((agent.x, agent.y))
                         continue
-
+                else:
+                    overall_stucks += 1
+                    agent.busy = False
+                    agent_stuck_count.reset()
             if agent_stuck_count.count > _STUCK_THRESHOLD + self.column_height + 2:  # Time to get out of aisle
                 overall_stucks += 1
-                agent_stuck_count.reset()
+                agent_stuck_count.reset((agent.x, agent.y))
                 agent.req_action = Action.NOOP
                 agent.busy = False
         return overall_stucks
@@ -558,7 +541,10 @@ class Warehouse(gym.Env):
                 if self.reward_type == RewardType.GLOBAL:
                     rewards += 0.5
                 elif self.reward_type == RewardType.INDIVIDUAL:
-                    rewards[picker_id - 1] += 0.1
+                    if agent.type == AgentType.AGENT:
+                        rewards[agent.id - 1] += 0.1
+                    else:
+                        rewards[picker_id - 1] += 0.1
         else:
             agent.busy = False
         return rewards
@@ -582,7 +568,10 @@ class Warehouse(gym.Env):
                 if self.reward_type == RewardType.GLOBAL:
                     rewards += 0.5
                 elif self.reward_type == RewardType.INDIVIDUAL:
-                    rewards[picker_id - 1] += 0.1
+                    if agent.type == AgentType.AGENT:
+                        rewards[agent.id - 1] += 0.1
+                    else:
+                        rewards[picker_id - 1] += 0.1
         return rewards
 
     def execute_micro_actions(self, rewards: np.ndarray[int]) -> np.ndarray[int]:
@@ -761,7 +750,6 @@ class Warehouse(gym.Env):
     def render(self, mode="human"):
         if not self.renderer:
             from tarware.rendering import Viewer
-
             self.renderer = Viewer(self.grid_size)
         return self.renderer.render(self, return_rgb_array=mode == "rgb_array")
 

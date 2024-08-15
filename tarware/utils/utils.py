@@ -67,7 +67,7 @@ def get_next_micro_action(agent_x, agent_y, agent_direction, target):
     elif turn_difference == 3:
         return Action.RIGHT
 
-def find_sections(pairs):
+def find_sections(pairs, aisle_per_sections=1):
     groups = []
 
     for pair in pairs:
@@ -81,5 +81,11 @@ def find_sections(pairs):
 
         if not added:
             groups.append([pair])
+
+    if aisle_per_sections > 1:
+        groups.sort(key=lambda x: x[0][1])
+        assert len(groups) % aisle_per_sections == 0
+        groups = split_list(groups, len(groups) // aisle_per_sections)
+        groups = [flatten_list(group) for group in groups]
 
     return groups
