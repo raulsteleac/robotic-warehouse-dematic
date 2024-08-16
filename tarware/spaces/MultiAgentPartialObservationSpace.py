@@ -2,7 +2,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from tarware.definitions import Action, AgentType
+from tarware.definitions import Action, AgentType, CollisionLayers
 from tarware.spaces.MultiAgentBaseObservationSpace import (
     MultiAgentBaseObservationSpace, _VectorWriter)
 
@@ -84,7 +84,7 @@ class MultiAgentPartialObservationSpace(MultiAgentBaseObservationSpace):
         if agent.type == AgentType.AGV:
             for group in environment.rack_groups:
                 for (x, y) in group:
-                    id_shelf = environment.grid[1, x, y]
+                    id_shelf = environment.grid[CollisionLayers.SHELFS, x, y]
                     if id_shelf!=0:
                         obs.write([1.0 , int(environment.shelfs[id_shelf - 1] in environment.request_queue)])
                     else:
