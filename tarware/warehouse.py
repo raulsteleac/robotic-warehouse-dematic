@@ -283,7 +283,7 @@ class Warehouse(gym.Env):
         grid[goal[0], goal[1]] = 0
 
         if agent.type == AgentType.PICKER:
-            # Pickers can only travel through the highway, but cann access goal locations
+            # Pickers can only travel through the highway, but can access goal locations
             grid += (1-self.highways)
             grid[goal[0], goal[1]] -= not self._is_highway(goal[1], goal[0])
             for i in range(self.grid_size[1]):

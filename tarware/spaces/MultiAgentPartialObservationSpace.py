@@ -60,7 +60,7 @@ class MultiAgentPartialObservationSpace(MultiAgentBaseObservationSpace):
         obs = _VectorWriter(self.ma_spaces[agent.id - 1].shape[0])
         # Agent self observation
         obs.write(self.process_coordinates((agent.y, agent.x), environment))
-        if agent.target!=0:
+        if agent.target:
             obs.write(self.process_coordinates(environment.action_id_to_coords_map[agent.target], environment))
         else:
             obs.skip(2)
@@ -69,13 +69,13 @@ class MultiAgentPartialObservationSpace(MultiAgentBaseObservationSpace):
         for agent_ in environment.agents:
             if agent_.id != agent.id:
                 if agent.type == AgentType.PICKER and agent_.type == AgentType.AGV:
-                    if agent_.carrying_shelf!=0:
+                    if agent_.carrying_shelf:
                         obs.write([1, int(agent_.carrying_shelf in environment.request_queue)])
                     else:
                         obs.skip(2)
                     obs.write([agent_.req_action == Action.TOGGLE_LOAD])
                 obs.write(self.process_coordinates((agent_.y, agent_.x), environment))
-                if agent_.target!=0:
+                if agent_.target:
                     obs.write(self.process_coordinates(environment.action_id_to_coords_map[agent_.target], environment))
                 else:
                     obs.skip(2)
