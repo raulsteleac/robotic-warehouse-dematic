@@ -660,7 +660,8 @@ class Warehouse(gym.Env):
         self.request_queue = list(
             np.random.choice(self.shelfs, size=self.request_queue_size, replace=False)
         )
-        return tuple([self.observation_space_mapper.observation(agent, self) for agent in self.agents])
+        self.observation_space_mapper.extract_environment_info(self)
+        return tuple([self.observation_space_mapper.observation(agent) for agent in self.agents])
 
     def step(
         self, macro_actions: List[int]
@@ -689,7 +690,8 @@ class Warehouse(gym.Env):
         else:
             terminateds = truncateds =  self.num_agents * [False]
 
-        new_obs = tuple([self.observation_space_mapper.observation(agent, self) for agent in self.agents])
+        self.observation_space_mapper.extract_environment_info(self)
+        new_obs = tuple([self.observation_space_mapper.observation(agent) for agent in self.agents])
         info = self._build_info(
             agvs_distance_travelled,
             pickers_distance_travelled,

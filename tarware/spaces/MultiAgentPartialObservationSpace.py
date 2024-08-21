@@ -15,7 +15,9 @@ class MultiAgentPartialObservationSpace(MultiAgentBaseObservationSpace):
         self._define_obs_length_pickers()
         self.agv_obs_lengths = [self._obs_length_agvs for _ in range(self.num_agvs)]
         self.picker_obs_lengths = [self._obs_length_pickers for _ in range(self.num_pickers)]
-
+        self._current_agvs_agents_info = []
+        self._current_pickers_agents_info = []
+        self._current_shelves_info = []
         ma_spaces = []
         for obs_length in self.agv_obs_lengths + self.picker_obs_lengths:
             ma_spaces += [
@@ -55,38 +57,52 @@ class MultiAgentPartialObservationSpace(MultiAgentBaseObservationSpace):
             + self.pickers_obs_bits_for_pickers
         )
 
-    def observation(self, agent, environment):        
-        # write flattened observations
-        obs = _VectorWriter(self.ma_spaces[agent.id - 1].shape[0])
-        # Agent self observation
-        obs.write(self.process_coordinates((agent.y, agent.x), environment))
-        if agent.target:
-            obs.write(self.process_coordinates(environment.action_id_to_coords_map[agent.target], environment))
-        else:
-            obs.skip(2)
+    def extract_environment_info(self, environment):
+        self._current_agvs_agents_info = []
+        self._current_pickers_agents_info = []
+        self._current_shelves_info = []
 
-        # Other agents observation
-        for agent_ in environment.agents:
-            if agent_.id != agent.id:
-                if agent.type == AgentType.PICKER and agent_.type == AgentType.AGV:
-                    if agent_.carrying_shelf:
-                        obs.write([1, int(agent_.carrying_shelf in environment.request_queue)])
-                    else:
-                        obs.skip(2)
-                    obs.write([agent_.req_action == Action.TOGGLE_LOAD])
-                obs.write(self.process_coordinates((agent_.y, agent_.x), environment))
-                if agent_.target:
-                    obs.write(self.process_coordinates(environment.action_id_to_coords_map[agent_.target], environment))
+        # Extract agents info
+        for agent in environment.agents:
+            agvs_agent_info = []
+            pickers_agent_info = []
+            if agent.type == AgentType.AGV:
+                if agent.carrying_shelf:
+                    pickers_agent_info.extend([1, int(agent.carrying_shelf in environment.request_queue)])
                 else:
-                    obs.skip(2)
+                    pickers_agent_info.extend([0, 0])
+                pickers_agent_info.extend([agent.req_action == Action.TOGGLE_LOAD])
+            agvs_agent_info.extend(self.process_coordinates((agent.y, agent.x), environment))
+            pickers_agent_info.extend(self.process_coordinates((agent.y, agent.x), environment))
+            if agent.target:
+                agvs_agent_info.extend(self.process_coordinates(environment.action_id_to_coords_map[agent.target], environment))
+                pickers_agent_info.extend(self.process_coordinates(environment.action_id_to_coords_map[agent.target], environment))
+            else:
+                agvs_agent_info.extend([0, 0])
+                pickers_agent_info.extend([0, 0])
+            self._current_agvs_agents_info.append(agvs_agent_info)
+            self._current_pickers_agents_info.append(pickers_agent_info)
 
-        # Shelves observation
+        # Extract shelves info
+        for group in environment.rack_groups:
+            for (x, y) in group:
+                id_shelf = environment.grid[CollisionLayers.SHELFS, x, y]
+                if id_shelf!=0:
+                    self._current_shelves_info.extend([1.0 , int(environment.shelfs[id_shelf - 1] in environment.request_queue)])
+                else:
+                    self._current_shelves_info.extend([0, 0])
+
+    def observation(self, agent):
+        obs = _VectorWriter(self.ma_spaces[agent.id - 1].shape[0])
         if agent.type == AgentType.AGV:
-            for group in environment.rack_groups:
-                for (x, y) in group:
-                    id_shelf = environment.grid[CollisionLayers.SHELFS, x, y]
-                    if id_shelf!=0:
-                        obs.write([1.0 , int(environment.shelfs[id_shelf - 1] in environment.request_queue)])
-                    else:
-                        obs.skip(2)
+            obs.write(self._current_agvs_agents_info[agent.id - 1])
+            for agent_id, agent_info in enumerate(self._current_agvs_agents_info):
+                if agent_id != agent.id - 1:
+                    obs.write(agent_info)
+            obs.write(self._current_shelves_info)
+        else:
+            obs.write(self._current_pickers_agents_info[agent.id - 1])
+            for agent_id, agent_info in enumerate(self._current_pickers_agents_info):
+                if agent_id != agent.id - 1:
+                    obs.write(agent_info)
         return obs.vector

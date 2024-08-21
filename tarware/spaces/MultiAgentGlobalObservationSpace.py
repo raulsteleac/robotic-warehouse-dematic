@@ -12,6 +12,8 @@ class MultiAgentGlobalObservationSpace(MultiAgentBaseObservationSpace):
 
         self._define_obs_length()
         self.obs_lengths = [self.obs_length for _ in range(self.num_agents)]
+        self._current_agents_info = []
+        self._current_shelves_info = []
 
         ma_spaces = []
         for obs_length in self.obs_lengths:
@@ -40,43 +42,40 @@ class MultiAgentGlobalObservationSpace(MultiAgentBaseObservationSpace):
             + self.obs_bits_for_requests
         )
 
-    def observation(self, agent, environment):        
-        # write flattened observations
-        obs = _VectorWriter(self.ma_spaces[agent.id - 1].shape[0])
-        # Agent self observation
-        if agent.type == AgentType.AGV:
-            if agent.carrying_shelf:
-                obs.write([1, int(agent.carrying_shelf in environment.request_queue)])
-            else:
-                obs.skip(2)
-            obs.write([agent.req_action == Action.TOGGLE_LOAD])
-        obs.write(self.process_coordinates((agent.y, agent.x), environment))
-        if agent.target:
-            obs.write(self.process_coordinates(environment.action_id_to_coords_map[agent.target], environment))
-        else:
-            obs.skip(2)
+    def extract_environment_info(self, environment):
+        self._current_agents_info = []
+        self._current_shelves_info = []
 
-        # Other agents observation
-        for agent_ in environment.agents:
-            if agent_.id != agent.id:
-                if agent_.type == AgentType.AGV:
-                    if agent_.carrying_shelf:
-                        obs.write([1, int(agent_.carrying_shelf in environment.request_queue)])
-                    else:
-                        obs.skip(2)
-                    obs.write([agent_.req_action == Action.TOGGLE_LOAD])
-                obs.write(self.process_coordinates((agent_.y, agent_.x), environment))
-                if agent_.target:
-                    obs.write(self.process_coordinates(environment.action_id_to_coords_map[agent_.target], environment))
+        # Extract agents info
+        for agent in environment.agents:
+            agent_info = []
+            if agent.type == AgentType.AGV:
+                if agent.carrying_shelf:
+                    agent_info.extend([1, int(agent.carrying_shelf in environment.request_queue)])
                 else:
-                    obs.skip(2)
+                    agent_info.extend([0, 0])
+                agent_info.extend([agent.req_action == Action.TOGGLE_LOAD])
+            agent_info.extend(self.process_coordinates((agent.y, agent.x), environment))
+            if agent.target:
+                agent_info.extend(self.process_coordinates(environment.action_id_to_coords_map[agent.target], environment))
+            else:
+                agent_info.extend([0, 0])
+            self._current_agents_info.append(agent_info)
 
-        # Shelves observation
+        # Extract shelves info
         for group in environment.rack_groups:
             for (x, y) in group:
                 id_shelf = environment.grid[CollisionLayers.SHELFS, x, y]
-                if id_shelf:
-                    obs.write([1.0 , int(environment.shelfs[id_shelf - 1] in environment.request_queue)])
+                if id_shelf!=0:
+                    self._current_shelves_info.extend([1.0 , int(environment.shelfs[id_shelf - 1] in environment.request_queue)])
                 else:
-                    obs.skip(2)
+                    self._current_shelves_info.extend([0, 0])
+
+    def observation(self, agent):
+        obs = _VectorWriter(self.ma_spaces[agent.id - 1].shape[0])
+        obs.write(self._current_agents_info[agent.id - 1])
+        for agent_id, agent_info in enumerate(self._current_agents_info):
+            if agent_id != agent.id - 1:
+                obs.write(agent_info)
+        obs.write(self._current_shelves_info)
         return obs.vector
