@@ -34,7 +34,7 @@ class MultiAgentPartialObservationSpace(MultiAgentBaseObservationSpace):
     def _define_obs_length_agvs(self):
         location_space = spaces.Box(low=0.0, high=max(self.grid_size), shape=(2,), dtype=np.float32)
 
-        self.agvs_obs_bits_for_agvs = (spaces.flatdim(location_space)  + spaces.flatdim(location_space)) * self.num_agvs
+        self.agvs_obs_bits_for_agvs = 3 + (spaces.flatdim(location_space)  + spaces.flatdim(location_space)) * self.num_agvs
         self.agvs_obs_bits_for_pickers = (spaces.flatdim(location_space)  + spaces.flatdim(location_space)) * self.num_pickers
         self.agvs_obs_bits_per_shelf = 1 * self.shelf_locations
         self.agvs_obs_bits_for_requests = 1 * self.shelf_locations
@@ -95,7 +95,7 @@ class MultiAgentPartialObservationSpace(MultiAgentBaseObservationSpace):
     def observation(self, agent):
         obs = _VectorWriter(self.ma_spaces[agent.id - 1].shape[0])
         if agent.type == AgentType.AGV:
-            obs.write(self._current_agvs_agents_info[agent.id - 1])
+            obs.write(self._current_pickers_agents_info[agent.id - 1])
             for agent_id, agent_info in enumerate(self._current_agvs_agents_info):
                 if agent_id != agent.id - 1:
                     obs.write(agent_info)
