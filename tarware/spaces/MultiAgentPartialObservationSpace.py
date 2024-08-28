@@ -86,7 +86,7 @@ class MultiAgentPartialObservationSpace(MultiAgentBaseObservationSpace):
         # Extract shelves info
         for group in environment.rack_groups:
             for (x, y) in group:
-                id_shelf = environment.grid[CollisionLayers.SHELFS, x, y]
+                id_shelf = environment.grid[CollisionLayers.SHELVES, x, y]
                 if id_shelf!=0:
                     self._current_shelves_info.extend([1.0 , int(environment.shelfs[id_shelf - 1] in environment.request_queue)])
                 else:

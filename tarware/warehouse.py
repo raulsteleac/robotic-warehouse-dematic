@@ -205,7 +205,7 @@ class Warehouse(gym.Env):
     @property
     def targets_agvs(self):
         return [agent.target for agent in self.agents[:self.num_agvs]]
-    
+
     @property
     def targets_pickers(self):
         return [agent.target for agent in self.agents[self.num_agvs:]]
@@ -244,7 +244,7 @@ class Warehouse(gym.Env):
         self.num_goals = len(self.goals)
 
         self.highways = np.zeros(self.grid_size, dtype=np.int32)
-        self.action_id_to_coords_map = {i+1: (x, y) for i, (y, x) in enumerate(self.goals)} 
+        self.action_id_to_coords_map = {i+1: (x, y) for i, (y, x) in enumerate(self.goals)}
         item_loc_index=len(self.action_id_to_coords_map)+1
         for x in range(self.grid_size[1]):
             for y in range(self.grid_size[0]):
@@ -258,12 +258,12 @@ class Warehouse(gym.Env):
 
     def find_path(self, start, goal: Tuple[int], agent: Tuple[int], care_for_agents: bool = True) -> List[Tuple[int]]:
         """
-        Constructs a path from start to goal using the A* algorithm contidioned on a grid that integrates both the 
+        Constructs a path from start to goal using the A* algorithm contidioned on a grid that integrates both the
         environment specific (shelf) and the presence of other agents as obstacles.
 
         If `care_for_agents` is True, the grid is adjusted to consider other agents as obtacles. However, we avoid
-        situatiosns where the paths is invalidated by agents of other types waiting to cooperate with the current. 
-        For Pickers, the grid is further modified to ensure they can only travel through designated highways and 
+        situatiosns where the paths is invalidated by agents of other types waiting to cooperate with the current.
+        For Pickers, the grid is further modified to ensure they can only travel through designated highways and
         access goal locations.
 
         Parameters:
@@ -320,12 +320,12 @@ class Warehouse(gym.Env):
         carried_shelf_ids = {agent.carrying_shelf.id for agent in self.agents if agent.carrying_shelf}
         for shelf in self.shelfs:
             if shelf.id not in carried_shelf_ids:
-                self.grid[CollisionLayers.SHELFS, shelf.y, shelf.x] = shelf.id
+                self.grid[CollisionLayers.SHELVES, shelf.y, shelf.x] = shelf.id
         for agent in self.agents:
             layer = CollisionLayers.PICKERS if agent.type == AgentType.PICKER else CollisionLayers.AGVS
             self.grid[layer, agent.y, agent.x] = agent.id
             if agent.carrying_shelf:
-                 self.grid[CollisionLayers.CARRIED_SHELFS, agent.y, agent.x] = agent.carrying_shelf.id
+                 self.grid[CollisionLayers.CARRIED_SHELVES, agent.y, agent.x] = agent.carrying_shelf.id
 
     def get_carrying_shelf_information(self):
         return [agent.carrying_shelf != None for agent in self.agents[:self.num_agvs]]
@@ -335,7 +335,7 @@ class Warehouse(gym.Env):
         requested_shelf_ids = [shelf.id for shelf in self.request_queue]
         for id_, coords in self.action_id_to_coords_map.items():
             if (coords[1], coords[0]) not in self.goals:
-                if self.grid[CollisionLayers.SHELFS, coords[0], coords[1]] in requested_shelf_ids:
+                if self.grid[CollisionLayers.SHELVES, coords[0], coords[1]] in requested_shelf_ids:
                     request_item_map[id_ - len(self.goals) - 1] = 1
         return request_item_map
 
@@ -343,8 +343,8 @@ class Warehouse(gym.Env):
         empty_item_map = np.zeros(len(self.shelfs))
         for id_, coords in self.action_id_to_coords_map.items():
             if (coords[1], coords[0]) not in self.goals:
-                if self.grid[CollisionLayers.SHELFS, coords[0], coords[1]] == 0 and (
-                    self.grid[CollisionLayers.CARRIED_SHELFS, coords[0], coords[1]] == 0
+                if self.grid[CollisionLayers.SHELVES, coords[0], coords[1]] == 0 and (
+                    self.grid[CollisionLayers.CARRIED_SHELVES, coords[0], coords[1]] == 0
                     or self.agents[
                         self.grid[CollisionLayers.AGVS, coords[0], coords[1]] - 1
                     ].req_action
@@ -385,7 +385,7 @@ class Warehouse(gym.Env):
                     pickrs_distance_travelled += int(agent.type == AgentType.PICKER)
                 if len(agent.path) == 1:
                     # If agent is at the end of a path and carrying a shelf and the target location is already occupied, restart agent
-                    if agent.carrying_shelf and self.grid[CollisionLayers.SHELFS, agent.path[-1][1], agent.path[-1][0]]:
+                    if agent.carrying_shelf and self.grid[CollisionLayers.SHELVES, agent.path[-1][1], agent.path[-1][0]]:
                         agent.req_action = Action.NOOP
                         agent.busy = False
                     # Logic for Pickers to load shelves if AGV is present at location or wait otherwise
@@ -448,11 +448,11 @@ class Warehouse(gym.Env):
                     agent_new_x, agent_new_y = agent.req_location(self.grid_size)
                     other_new_x, other_new_y = other.req_location(self.grid_size)
                     # Clash fixing logic
-                    if agent.path and ((agent_new_x, agent_new_y) in [(other.x, other.y), (other_new_x, other_new_y)]): 
+                    if agent.path and ((agent_new_x, agent_new_y) in [(other.x, other.y), (other_new_x, other_new_y)]):
                         # If we are in a rack and one of the agents is a picker we ignore clashses, assumed behaviour is Picker is loading
                         if not self._is_highway(agent_new_x, agent_new_y) and (agent.type == AgentType.PICKER or other.type == AgentType.PICKER) and agent.type != other.type:
                             # Allow Pickers to step over AGVs (if no other Picker at that shelf location) or AGVs to step over Pickers (if no other AGV at that shelf location)
-                            if ((agent.type == AgentType.PICKER and self.grid[CollisionLayers.PICKERS, agent_new_y, agent_new_x] in [0, agent.id]) 
+                            if ((agent.type == AgentType.PICKER and self.grid[CollisionLayers.PICKERS, agent_new_y, agent_new_x] in [0, agent.id])
                                 or (agent.type == AgentType.AGV and self.grid[CollisionLayers.AGVS, agent_new_y, agent_new_x] in [0, agent.id])):
                                 commited_agents.add(agent.id)
                                 continue
@@ -469,7 +469,7 @@ class Warehouse(gym.Env):
                                         agent.path = new_path
                                     else:
                                         agent.fixing_clash = 0
-                        elif (agent_new_x, agent_new_y) == (other_new_x, other_new_y) and (agent_new_x, agent_new_y) != (agent.x, agent.y): 
+                        elif (agent_new_x, agent_new_y) == (other_new_x, other_new_y) and (agent_new_x, agent_new_y) != (agent.x, agent.y):
                             # If the agent's next action bumps it into another agent position after they take actions simultaneously
                             if agent.fixing_clash == 0 and other.fixing_clash == 0:
                                 agent.req_action = Action.NOOP # If the agent's actions leads them in the position of another STOP
@@ -526,7 +526,7 @@ class Warehouse(gym.Env):
         agent.dir = agent.req_direction()
 
     def _execute_load(self, agent: Agent, rewards: np.ndarray[int]) -> np.ndarray[int]:
-        shelf_id = self.grid[CollisionLayers.SHELFS, agent.y, agent.x]
+        shelf_id = self.grid[CollisionLayers.SHELVES, agent.y, agent.x]
         picker_id = self.grid[CollisionLayers.PICKERS, agent.y, agent.x]
         if shelf_id:
             if (
@@ -534,8 +534,8 @@ class Warehouse(gym.Env):
                 or agent.type == AgentType.AGENT
             ):
                 agent.carrying_shelf = self.shelfs[shelf_id - 1]
-                self.grid[CollisionLayers.SHELFS, agent.y, agent.x] = 0
-                self.grid[CollisionLayers.CARRIED_SHELFS, agent.y, agent.x] = shelf_id
+                self.grid[CollisionLayers.SHELVES, agent.y, agent.x] = 0
+                self.grid[CollisionLayers.CARRIED_SHELVES, agent.y, agent.x] = shelf_id
                 agent.busy = False
                 # Reward picker for loading
                 if self.reward_type == RewardType.GLOBAL:
@@ -550,7 +550,7 @@ class Warehouse(gym.Env):
         return rewards
 
     def _execute_unload(self, agent: Agent, rewards: np.ndarray[int]) -> np.ndarray[int]:
-        if (agent.x, agent.y) in self.goals or self.grid[CollisionLayers.SHELFS, agent.y, agent.x] != 0:
+        if (agent.x, agent.y) in self.goals or self.grid[CollisionLayers.SHELVES, agent.y, agent.x] != 0:
             agent.busy = False
             return rewards
         picker_id = self.grid[CollisionLayers.PICKERS, agent.y, agent.x]
@@ -559,8 +559,8 @@ class Warehouse(gym.Env):
                 (agent.type == AgentType.AGV and picker_id)
                 or agent.type == AgentType.AGENT
             ):
-                self.grid[CollisionLayers.SHELFS, agent.y, agent.x] = agent.carrying_shelf.id
-                self.grid[CollisionLayers.CARRIED_SHELFS, agent.y, agent.x] = 0
+                self.grid[CollisionLayers.SHELVES, agent.y, agent.x] = agent.carrying_shelf.id
+                self.grid[CollisionLayers.CARRIED_SHELVES, agent.y, agent.x] = 0
                 agent.carrying_shelf = None
                 agent.busy = False
                 agent.has_delivered = False
@@ -590,7 +590,7 @@ class Warehouse(gym.Env):
     def process_shelf_deliveries(self, rewards: np.ndarray[int]) -> np.ndarray[int]:
         shelf_deliveries = 0
         for y, x in self.goals:
-            shelf_id = self.grid[CollisionLayers.CARRIED_SHELFS, x, y]
+            shelf_id = self.grid[CollisionLayers.CARRIED_SHELVES, x, y]
             if not shelf_id  or self.shelfs[shelf_id - 1] not in self.request_queue:
                 continue
             # Remove shelf from request queue and add replacement
@@ -653,7 +653,7 @@ class Warehouse(gym.Env):
             Agent(x, y, dir_, agent_type = agent_type)
             for y, x, dir_, agent_type in zip(*agent_locs, agent_dirs, self._agent_types)
         ]
-        
+
         self.stuck_counters = [StuckCounter((agent.x, agent.y)) for agent in self.agents]
         self._recalc_grid()
 
@@ -721,13 +721,13 @@ class Warehouse(gym.Env):
         info["agvs_idle_time"] = agvs_idle_time
         info["pickers_idle_time"] = pickers_idle_time
         return info
-    
+
     def compute_valid_action_masks(self, pickers_to_agvs=True, block_conflicting_actions=True):
         requested_items = self.get_shelf_request_information()
         empty_items = self.get_empty_shelf_information()
         carrying_shelf_info = self.get_carrying_shelf_information()
-        targets_agvs = [target - len(self.goals) - 1 for target in self.targets_agvs if target > len(self.goals)] 
-        targets_pickers = [target - len(self.goals) - 1 for target in self.targets_pickers if target > len(self.goals)] 
+        targets_agvs = [target - len(self.goals) - 1 for target in self.targets_agvs if target > len(self.goals)]
+        targets_pickers = [target - len(self.goals) - 1 for target in self.targets_pickers if target > len(self.goals)]
         # Compute valid location list for AGVs
         valid_location_list_agvs = np.array([
             empty_items if carrying_shelf else requested_items for carrying_shelf in carrying_shelf_info

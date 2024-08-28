@@ -8,7 +8,7 @@ README = (HERE / "README.md").read_text()
 
 setup(
     name="tarware",
-    version="1.0.0",
+    version="1.1.0",
     description="Task-Assignment Multi-Robot Warehouse environment for reinforcement learning",
     long_description=README,
     long_description_content_type="text/markdown",
@@ -26,7 +26,7 @@ setup(
         "gymnasium",
         "six==1.16.0",
         "pyglet==1.5.11",
-        "pyastar2d"
+        "pyastar2d @ git+https://github.com/raulsteleac/pyastar2d_TARWARE#egg=pyastar2d_TARWARE"
     ],
     extras_require={"test": ["pytest"]},
     include_package_data=True,

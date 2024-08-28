@@ -41,5 +41,5 @@ class ImageLayer(Enum):
 class CollisionLayers(IntEnum):
     AGVS = 0
     PICKERS = 1
-    SHELFS = 2
-    CARRIED_SHELFS = 3
+    SHELVES = 2
+    CARRIED_SHELVES = 3
